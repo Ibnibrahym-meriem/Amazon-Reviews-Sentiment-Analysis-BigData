@@ -3,6 +3,23 @@ Reviews.csv
 __pycache__/
 .ipynb_checkpoints/
 
+# JARs inutiles
+*.jar
+
+# Données trop lourdes
+Reviews.csv
+
+# Fichiers Spark temporaires
+checkpoint_final/
+checkpoint*/
+
+# Fichiers Python
+__pycache__/
+*.pyc
+
+# Fichiers Windows
+run_spark.cmd
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

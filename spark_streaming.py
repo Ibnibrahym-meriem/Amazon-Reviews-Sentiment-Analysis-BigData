@@ -1,0 +1,100 @@
+import os
+import sys
+
+os.environ['PYSPARK_PYTHON'] = sys.executable
+os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
+
+java_opts = " ".join([
+    "--add-opens=java.base/javax.security.auth=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+    "--add-opens=java.base/java.text=ALL-UNNAMED",
+    "--add-opens=java.sql/java.sql=ALL-UNNAMED",
+])
+
+os.environ['JAVA_TOOL_OPTIONS'] = java_opts
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import from_json, col, current_timestamp, when, udf
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType
+from pyspark.ml import PipelineModel
+from pyspark.ml.classification import LogisticRegressionModel
+import pyspark.sql.functions as F
+
+spark = SparkSession.builder \
+    .appName("AmazonReviewsFinal") \
+    .config("spark.driver.extraJavaOptions", java_opts) \
+    .config("spark.executor.extraJavaOptions", java_opts) \
+    .config("spark.jars.packages",
+        "org.apache.spark:spark-sql-kafka-0-10_2.13:4.1.0,"
+        "org.mongodb.spark:mongo-spark-connector_2.13:10.3.0") \
+    .config("spark.mongodb.output.uri", "mongodb://127.0.0.1:27017/amazon_db.reviews") \
+    .getOrCreate()
+
+# Désactiver checksums
+spark.sparkContext._jsc.hadoopConfiguration().set("fs.file.impl.disable.cache", "true")
+spark.sparkContext._jsc.hadoopConfiguration().set("dfs.client.read.shortcircuit.skip.checksum", "true")
+
+# Schéma Kafka
+schema = StructType([
+    StructField("Id", IntegerType()),
+    StructField("ProductId", StringType()),
+    StructField("UserId", StringType()),
+    StructField("ProfileName", StringType()),
+    StructField("HelpfulnessNumerator", IntegerType()),
+    StructField("HelpfulnessDenominator", IntegerType()),
+    StructField("Score", IntegerType()),
+    StructField("Time", LongType()),
+    StructField("Summary", StringType()),
+    StructField("Text", StringType())
+])
+
+# Chargement modèles
+preprocessing_pipeline = PipelineModel.load("models/preprocessing_pipeline")
+model = LogisticRegressionModel.load("models/final_best_model")
+
+# Lecture Kafka
+df_raw = spark.readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "localhost:9092") \
+    .option("subscribe", "amazon_reviews") \
+    .load()
+
+# Parsing + nettoyage texte
+df_parsed = df_raw.selectExpr("CAST(value AS STRING)") \
+    .select(from_json(col("value"), schema).alias("data")) \
+    .select("data.*") \
+    .withColumn("cleaned_text", F.lower(F.regexp_replace(F.col("Text"), r"<.*?>", " ")))
+
+# Preprocessing + prédiction
+df_preprocessed = preprocessing_pipeline.transform(df_parsed)
+df_predictions = model.transform(df_preprocessed)
+
+# Extraction confiance
+extract_prob = udf(lambda v: float(v.toArray().max()), FloatType())
+
+final_df = df_predictions.withColumn("predicted_sentiment",
+    when(col("prediction") == 0, "negative")
+    .when(col("prediction") == 1, "neutral")
+    .otherwise("positive")
+).withColumn("confidence", extract_prob(col("probability"))) \
+ .withColumn("processed_at", current_timestamp()) \
+ .select(
+    "Id", "ProductId", "UserId", "ProfileName",
+    "HelpfulnessNumerator", "HelpfulnessDenominator",
+    "Score", "Time", "Summary", "Text",
+    "predicted_sentiment", "confidence", "processed_at"
+)
+
+# Écriture MongoDB
+query = final_df.writeStream \
+    .format("mongodb") \
+    .option("checkpointLocation", "./checkpoint_final") \
+    .option("database", "amazon_db") \
+    .option("collection", "reviews") \
+    .outputMode("append") \
+    .start()
+
+query.awaitTermination()

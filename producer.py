@@ -3,27 +3,33 @@ from kafka import KafkaProducer
 import json
 import time
 
-# 1. Configuration du Producer Kafka
-# 'localhost:9092' est le port exposé par votre conteneur Docker Kafka
 producer = KafkaProducer(
     bootstrap_servers=['localhost:9092'],
     value_serializer=lambda x: json.dumps(x).encode('utf-8')
 )
 
-# Nom du topic défini dans votre architecture [cite: 16]
 TOPIC_NAME = 'amazon_reviews'
 
 def start_producer():
     try:
         print("--- Chargement des données Amazon Fine Food Reviews ---")
-        # Lecture du fichier CSV collecté sur Kaggle 
-        # On utilise chunksize si le fichier est trop lourd (500 000 avis) [cite: 94]
         df = pd.read_csv('Reviews.csv')
         
+        # ✅ Utiliser seulement les 10% de test (comme dans le notebook)
+        # Reproduire le même split que lors de l'entraînement
+        total = len(df)
+        test_start = int(total * 0.90)  # 90% → début du test set
+        df_test = df.iloc[test_start:].reset_index(drop=True)
+        
+        print(f"--- Total reviews : {total} ---")
+        print(f"--- Test set : {len(df_test)} reviews ---")
         print(f"--- Début de l'envoi vers le topic : {TOPIC_NAME} ---")
-
-        for index, row in df.iterrows():
-            # Construction du message JSON respectant strictement vos données [cite: 97, 98, 99, 100, 101, 102]
+        
+        for index, row in df_test.iterrows():
+            # Vérifier que les valeurs ne sont pas NaN
+            if pd.isna(row['Text']) or pd.isna(row['ProfileName']):
+                continue
+                
             message = {
                 "Id": int(row['Id']),
                 "ProductId": str(row['ProductId']),
@@ -34,23 +40,25 @@ def start_producer():
                 "Score": int(row['Score']),
                 "Time": int(row['Time']),
                 "Summary": str(row['Summary']),
-                "Text": str(row['Text']) # Contenu complet de l'avis (texte brut) [cite: 102]
+                "Text": str(row['Text'])
             }
-
-            # Envoi du message (Push) vers le broker Kafka [cite: 22]
+            
             producer.send(TOPIC_NAME, value=message)
             
-            # Affichage de contrôle tous les 10 messages
-            if index % 10 == 0:
-                print(f"[PRODUCER] Avis {row['Id']} envoyé (Produit: {row['ProductId']})")
+            # Affichage de contrôle
+            print(f"[PRODUCER] ✅ Avis {row['Id']} envoyé | "
+                  f"Produit: {row['ProductId']} | "
+                  f"Score: {row['Score']}/5")
             
-            # Simulation du flux temps réel (pause de 1 seconde entre chaque avis) [cite: 6]
+            # 1 avis par seconde → simulation temps réel
             time.sleep(1)
-
+            
+        print("--- ✅ Tous les avis du test set ont été envoyés ---")
+        
     except FileNotFoundError:
-        print("Erreur : Le fichier 'Reviews.csv' n'est pas dans le dossier actuel.")
+        print("Erreur : Le fichier 'Reviews.csv' n'est pas trouvé.")
     except Exception as e:
-        print(f"Une erreur est survenue : {e}")
+        print(f"Erreur : {e}")
 
 if __name__ == "__main__":
     start_producer()
