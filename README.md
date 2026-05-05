@@ -273,9 +273,3 @@ Créer le topic sur http://localhost:8080 → Topics → **+ Add a Topic**
 Vérifier que `producer.py` tourne dans un terminal séparé.
 
 ---
-
-## Équipe
-
-Projet réalisé dans le cadre du cours Big Data — IASD 2025-2026
-
-Présentation : **lundi 11/05/2026**
