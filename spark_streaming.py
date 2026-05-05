@@ -88,13 +88,84 @@ final_df = df_predictions.withColumn("predicted_sentiment",
     "predicted_sentiment", "confidence", "processed_at"
 )
 
-# Écriture MongoDB
+# ============================================
+# 8. Un seul foreachBatch qui gère tout
+# ============================================
+from pyspark.sql.functions import avg, count, sum as spark_sum, when, round as spark_round
+
+def process_batch(batch_df, batch_id):
+    if batch_df.count() == 0:
+        print(f"[BATCH {batch_id}] Batch vide, skip")
+        return
+
+    # --- Collection 1 : reviews ---
+    batch_df.write \
+        .format("mongodb") \
+        .option("database", "amazon_db") \
+        .option("collection", "reviews") \
+        .mode("append") \
+        .save()
+    print(f"[BATCH {batch_id}] ✅ reviews stockés ({batch_df.count()} docs)")
+
+    # --- Collection 2 : product_metrics ---
+    product_metrics = batch_df.groupBy("ProductId").agg(
+        count("*").alias("review_count"),
+        spark_round(avg(
+            when(col("predicted_sentiment") == "positive", 2)
+            .when(col("predicted_sentiment") == "neutral", 1)
+            .otherwise(0)
+        ), 2).alias("avg_sentiment"),
+        spark_round(
+            spark_sum(when(col("predicted_sentiment") == "positive", 1).otherwise(0)) / count("*"), 2
+        ).alias("positive_ratio"),
+        spark_round(
+            spark_sum(when(col("predicted_sentiment") == "negative", 1).otherwise(0)) / count("*"), 2
+        ).alias("negative_ratio"),
+        spark_round(
+            spark_sum(when(col("predicted_sentiment") == "neutral", 1).otherwise(0)) / count("*"), 2
+        ).alias("neutral_ratio"),
+        current_timestamp().alias("last_updated")
+    ).withColumnRenamed("ProductId", "_id")
+
+    product_metrics.write \
+        .format("mongodb") \
+        .option("database", "amazon_db") \
+        .option("collection", "product_metrics") \
+        .mode("append") \
+        .save()
+    print(f"[BATCH {batch_id}] ✅ product_metrics mis à jour")
+
+    # --- Collection 3 : model_metrics ---
+    total = batch_df.count()
+    correct = batch_df.filter(
+        ((col("predicted_sentiment") == "positive") & (col("Score") >= 4)) |
+        ((col("predicted_sentiment") == "negative") & (col("Score") <= 2)) |
+        ((col("predicted_sentiment") == "neutral")  & (col("Score") == 3))
+    ).count()
+
+    accuracy = round(correct / total, 4) if total > 0 else 0.0
+
+    model_metrics_data = [{"accuracy": accuracy, "total_processed": total,
+                           "correct_predictions": correct,
+                           "model_path": "models/final_best_model"}]
+    model_metrics_df = batch_df.sparkSession.createDataFrame(model_metrics_data)
+
+    model_metrics_df.write \
+        .format("mongodb") \
+        .option("database", "amazon_db") \
+        .option("collection", "model_metrics") \
+        .mode("append") \
+        .save()
+    print(f"[BATCH {batch_id}] ✅ model_metrics — accuracy: {accuracy}")
+
+# ============================================
+# 9. Lancer UN SEUL stream
+# ============================================
 query = final_df.writeStream \
-    .format("mongodb") \
+    .foreachBatch(process_batch) \
     .option("checkpointLocation", "./checkpoint_final") \
-    .option("database", "amazon_db") \
-    .option("collection", "reviews") \
     .outputMode("append") \
+    .trigger(processingTime="5 seconds") \
     .start()
 
 query.awaitTermination()
