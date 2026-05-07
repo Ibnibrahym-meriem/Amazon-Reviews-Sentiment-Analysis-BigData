@@ -17,11 +17,50 @@ java_opts = " ".join([
 os.environ['JAVA_TOOL_OPTIONS'] = java_opts
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, current_timestamp, when, udf
+from pyspark.sql.functions import (
+    lower, regexp_replace, concat_ws,
+    coalesce, lit, from_json, col, current_timestamp, when, udf
+)
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, FloatType
 from pyspark.ml import PipelineModel
 from pyspark.ml.classification import LogisticRegressionModel
 import pyspark.sql.functions as F
+
+def apply_cleaning(df):
+    """
+    Nettoyage IDENTIQUE à Notebook 02 — NE PAS MODIFIER.
+
+    Le pipeline TF-IDF (preprocessing_pipeline) a été fitté
+    sur ce format exact. Toute divergence dégrade les prédictions
+    car les tokens ne correspondent plus au vocabulaire appris.
+
+    Étapes (dans l'ordre obligatoire) :
+    1. Combiner Summary + Text  ← crucial, le pipeline a été fitté sur les deux
+    2. Lowercase
+    3. Supprimer balises HTML
+    4. Supprimer URLs
+    5. Supprimer caractères non-alpha
+    6. Normaliser les espaces
+    """
+    # Étape 1 : Combiner Summary + Text
+    # Ton code utilisait Text seul — le pipeline attend les deux colonnes
+    df = df.withColumn("full_text",
+        concat_ws(" ",
+                  coalesce(col("Summary"), lit("")),
+                  coalesce(col("Text"),    lit(""))))
+
+    # Étapes 2-6 : Nettoyage identique à Notebook 02
+    df = df.withColumn("cleaned_text", lower(col("full_text")))
+    df = df.withColumn("cleaned_text",
+        regexp_replace(col("cleaned_text"), r"<[^>]+>", " "))
+    df = df.withColumn("cleaned_text",
+        regexp_replace(col("cleaned_text"), r"https?://\S+|www\.\S+", " "))
+    df = df.withColumn("cleaned_text",
+        regexp_replace(col("cleaned_text"), r"[^a-z\s]", " "))
+    df = df.withColumn("cleaned_text",
+        regexp_replace(col("cleaned_text"), r"\s+", " "))
+
+    return df
 
 spark = SparkSession.builder \
     .appName("AmazonReviewsFinal") \
@@ -62,12 +101,12 @@ df_raw = spark.readStream \
     .option("subscribe", "amazon_reviews") \
     .load()
 
-# Parsing + nettoyage texte
+# Parsing + Appel fonction nettoyage texte
 df_parsed = df_raw.selectExpr("CAST(value AS STRING)") \
     .select(from_json(col("value"), schema).alias("data")) \
-    .select("data.*") \
-    .withColumn("cleaned_text", F.lower(F.regexp_replace(F.col("Text"), r"<.*?>", " ")))
+    .select("data.*")
 
+df_parsed = apply_cleaning(df_parsed) 
 # Preprocessing + prédiction
 df_preprocessed = preprocessing_pipeline.transform(df_parsed)
 df_predictions = model.transform(df_preprocessed)
