@@ -3,9 +3,17 @@ from kafka import KafkaProducer
 import json
 import time
 
+import time
+
+# Attendre que Kafka soit complètement prêt
+print("--- Attente de 30 secondes pour que Kafka soit prêt ---")
+time.sleep(30)
+
 producer = KafkaProducer(
-    bootstrap_servers=['localhost:9092'],
-    value_serializer=lambda x: json.dumps(x).encode('utf-8')
+    bootstrap_servers=['kafka:29092'],
+    value_serializer=lambda x: json.dumps(x).encode('utf-8'),
+    retries=5,
+    retry_backoff_ms=2000
 )
 
 TOPIC_NAME = 'amazon_reviews'

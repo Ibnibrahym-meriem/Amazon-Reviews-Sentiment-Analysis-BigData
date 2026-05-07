@@ -1,0 +1,23 @@
+FROM apache/spark:3.5.0
+
+USER root
+
+RUN pip install pymongo kafka-python
+
+COPY spark_streaming.py /app/
+COPY models/ /app/models/
+
+WORKDIR /app
+
+ENV JAVA_TOOL_OPTIONS="--add-opens=java.base/javax.security.auth=ALL-UNNAMED \
+    --add-opens=java.base/java.lang=ALL-UNNAMED \
+    --add-opens=java.base/java.net=ALL-UNNAMED \
+    --add-opens=java.base/java.util=ALL-UNNAMED \
+    --add-opens=java.base/java.util.concurrent=ALL-UNNAMED \
+    --add-opens=java.base/java.text=ALL-UNNAMED \
+    --add-opens=java.sql/java.sql=ALL-UNNAMED"
+
+CMD ["/opt/spark/bin/spark-submit", \
+     "--packages", \
+     "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.mongodb.spark:mongo-spark-connector_2.12:10.3.0", \
+     "/app/spark_streaming.py"]

@@ -18,8 +18,12 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      # Limite de mémoire pour vos 8 Go de RAM
       KAFKA_HEAP_OPTS: "-Xmx512M -Xms512M"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -47,7 +51,28 @@ services:
     environment:
       ME_CONFIG_MONGODB_SERVER: mongodb
 
+  producer:
+    build:
+      context: .
+      dockerfile: Dockerfile.producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: on-failure
 
+  spark-streaming:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongodb:
+        condition: service_started
+    volumes:
+      - ./checkpoint_final:/app/checkpoint_final
+    environment:
+      - JAVA_TOOL_OPTIONS=--add-opens=java.base/javax.security.auth=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.sql/java.sql=ALL-UNNAMED
 
 volumes:
   mongo-data:
