@@ -1,4 +1,25 @@
+version: '3.8'
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.1
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: 'ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2oasOM1Pg='
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+    _PIP_ADDITIONAL_REQUIREMENTS: 'pymongo' # Ajout de pymongo pour la connexion à MongoDB
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+  depends_on:
+    postgres:
+      condition: service_healthy
+
 services:
+  # ─── Services existants ───────────────────────────────────────
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     environment:
@@ -18,7 +39,6 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      # Limite de mémoire pour vos 8 Go de RAM
       KAFKA_HEAP_OPTS: "-Xmx512M -Xms512M"
 
   kafka-ui:
@@ -47,7 +67,56 @@ services:
     environment:
       ME_CONFIG_MONGODB_SERVER: mongodb
 
+  # ─── Airflow ──────────────────────────────────────────────────
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
 
+  airflow-init:
+    <<: *airflow-common
+    command: >
+      bash -c "airflow db init &&
+               airflow users create
+               --username admin
+               --password admin
+               --firstname Admin
+               --lastname User
+               --role Admin
+               --email admin@example.com"
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8082:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: always
 
 volumes:
   mongo-data:
+  postgres-data:

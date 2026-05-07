@@ -20,6 +20,13 @@ __pycache__/
 # Fichiers Windows
 run_spark.cmd
 
+# Airflow logs (dossier complet + sous-dossiers)
+logs/
+logs/**
+dag_id=*/
+dag_processor_manager/
+scheduler/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
