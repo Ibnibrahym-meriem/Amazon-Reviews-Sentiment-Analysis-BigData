@@ -2,14 +2,7 @@ version: '3.8'
 
 # ════════════════════════════════════════════════════════════════════════
 # docker-compose.yml — VERSION FINALE avec MLflow
-# Basé sur l'architecture réelle + ajout MLflow + volumes modèles
-#
-# Changements vs version précédente de l'équipe :
-#   ✅ Service mlflow ajouté (port 5000)
-#   ✅ Volume ./models:/opt/models dans x-airflow-common
-#   ✅ _PIP_ADDITIONAL_REQUIREMENTS enrichi (pyspark + mlflow)
-#   ✅ Volume mlflow-data pour persistance des expériences
-#   ✅ Tous les autres services identiques à leur version
+# Basé sur l'architecture  + ajout MLflow + volumes modèles
 # ════════════════════════════════════════════════════════════════════════
 
 x-airflow-common: &airflow-common
@@ -39,7 +32,7 @@ x-airflow-common: &airflow-common
 services:
 
   # ──────────────────────────────────────────────────────────────────────
-  # ZOOKEEPER — identique à leur version
+  # ZOOKEEPER 
   # ──────────────────────────────────────────────────────────────────────
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -51,7 +44,7 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # KAFKA — identique à leur version
+  # KAFKA 
   # ──────────────────────────────────────────────────────────────────────
   kafka:
     image: confluentinc/cp-kafka:7.5.0
@@ -77,7 +70,7 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # KAFKA UI — identique à leur version
+  # KAFKA UI 
   # ──────────────────────────────────────────────────────────────────────
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -94,7 +87,7 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # MONGODB — identique à leur version
+  # MONGODB 
   # ──────────────────────────────────────────────────────────────────────
   mongodb:
     image: mongo:latest
@@ -107,7 +100,7 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # MONGO EXPRESS — identique à leur version
+  # MONGO EXPRESS 
   # ──────────────────────────────────────────────────────────────────────
   mongo-express:
     image: mongo-express
@@ -122,7 +115,7 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # PRODUCER — identique à leur version
+  # PRODUCER (service Docker permanent)
   # ──────────────────────────────────────────────────────────────────────
   producer:
     build:
@@ -137,7 +130,7 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # SPARK STREAMING — identique à leur version
+  # SPARK STREAMING (service Docker permanent)
   # ──────────────────────────────────────────────────────────────────────
   spark-streaming:
     build:
@@ -153,7 +146,11 @@ services:
       - ./checkpoint_final:/app/checkpoint_final
       # Accès aux modèles pour le streaming
       - ./models:/opt/models
+    ports:
+      - "4040:4040"
     environment:
+      SPARK_LOCAL_IP: "0.0.0.0"
+      SPARK_UI_PORT: "4040"
       JAVA_TOOL_OPTIONS: >-
         --add-opens=java.base/javax.security.auth=ALL-UNNAMED
         --add-opens=java.base/java.lang=ALL-UNNAMED
@@ -166,7 +163,7 @@ services:
       - amazon_network
 
   # ══════════════════════════════════════════════════════════════════════
-  # MLFLOW — NOUVEAU SERVICE
+  # MLFLOW — NOUVEAU SERVICE DOCKER POUR LE TRACKING DES EXPÉRIENCES
   # UI : http://localhost:5000
   # Stockage : SQLite dans le volume mlflow-data (persistant)
   # ══════════════════════════════════════════════════════════════════════
@@ -193,7 +190,7 @@ services:
       retries: 5
 
   # ──────────────────────────────────────────────────────────────────────
-  # POSTGRESQL — Backend Airflow — identique à leur version
+  # POSTGRESQL — Backend Airflow 
   # ──────────────────────────────────────────────────────────────────────
   postgres:
     image: postgres:13
@@ -213,7 +210,7 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # AIRFLOW INIT — identique à leur version
+  # AIRFLOW INIT — initialise la BDD et crée l'utilisateur admin (s'exécute une seule fois)
   # ──────────────────────────────────────────────────────────────────────
   airflow-init:
     <<: *airflow-common
@@ -234,7 +231,7 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # AIRFLOW WEBSERVER — port 8082 comme leur version
+  # AIRFLOW WEBSERVER 
   # ──────────────────────────────────────────────────────────────────────
   airflow-webserver:
     <<: *airflow-common
@@ -257,7 +254,7 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # AIRFLOW SCHEDULER — identique à leur version
+  # AIRFLOW SCHEDULER (exécute les DAGs automatiquement)
   # ──────────────────────────────────────────────────────────────────────
   airflow-scheduler:
     <<: *airflow-common
@@ -278,7 +275,7 @@ services:
 volumes:
   mongo-data: {}
   postgres-data: {}
-  mlflow-data: {}        # NOUVEAU — persistance des expériences MLflow
+  mlflow-data: {}       
 
 # ════════════════════════════════════════════════════════════════════════
 # NETWORK — tous les services communiquent par nom de service
