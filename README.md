@@ -1,16 +1,16 @@
 # Amazon Reviews Sentiment Analysis — Big Data
 
-Analyse des avis clients Amazon en temps réel avec Kafka, Spark Streaming, MongoDB, ML et Apache Airflow.
+Analyse des avis clients Amazon en temps réel avec Kafka, Spark Streaming, MongoDB, ML, Apache Airflow et MLflow.
 
 ---
 
 ## Architecture
 
 ```
-Reviews.csv (500 000 avis)
+Reviews.csv (568 454 avis)
         │
         ├── 80% → Entraînement ML (LogisticRegression + TF-IDF)
-        ├── 10% → Validation
+        ├── 10% → Validation (tuning hyperparamètres)
         └── 10% → Flux temps réel via Kafka
                         │
                 producer.py (1 avis/sec)
@@ -18,17 +18,31 @@ Reviews.csv (500 000 avis)
                 Apache Kafka (Topic: amazon_reviews)
                         │
                 Spark Streaming (prédiction sentiment)
-                        │
+                │   └── Threshold Négatif = 0.35 (décision business)
+                │
                 MongoDB (3 collections)
                 ├── reviews          → avis + prédictions
                 ├── product_metrics  → stats par produit
-                └── model_metrics    → performance du modèle
+                └── model_metrics    → performance + historique réentraînements
                         │
-                Apache Airflow (orchestration @hourly)
-                ├── check_kafka          → vérifie Kafka
-                ├── check_mongodb        → vérifie MongoDB
-                ├── pipeline_health_report → rapport sentiment
-                └── check_product_metrics  → top produits
+                        ├── Apache Airflow (orchestration)
+                        │   ├── DAG 1 : amazon_reviews_pipeline (@hourly)
+                        │   │   ├── check_kafka            → vérifie Kafka
+                        │   │   ├── check_mongodb          → vérifie MongoDB
+                        │   │   ├── pipeline_health_report → rapport sentiment
+                        │   │   └── check_product_metrics  → top produits
+                        │   │
+                        │   └── DAG 2 : daily_sentiment_retraining (@daily 3h)
+                        │       ├── extract_and_prepare_data → lit MongoDB
+                        │       ├── retrain_model            → réentraîne LR
+                        │       ├── evaluate_and_promote     → compare modèles
+                        │       ├── update_model_metrics     → écrit résultats
+                        │       └── cleanup                  → nettoyage
+                        │
+                        └── MLflow (tracking ML)
+                            ├── Expérience : Amazon_Sentiment_Retraining
+                            ├── Logs : params, metrics, modèle
+                            └── UI : http://localhost:5000
 ```
 
 ---
@@ -41,8 +55,9 @@ Reviews.csv (500 000 avis)
 | Zookeeper | Gestion cluster Kafka |
 | Apache Spark (PySpark) | Traitement distribué + ML |
 | MongoDB | Stockage NoSQL des résultats |
-| **Apache Airflow** | **Orchestration et monitoring du pipeline** |
-| **PostgreSQL** | **Base de données interne Airflow** |
+| Apache Airflow | Orchestration — monitoring + réentraînement ML |
+| MLflow | Tracking des expériences ML + versioning modèles |
+| PostgreSQL | Base de données interne Airflow |
 | Docker | Conteneurisation des services |
 | Python 3.10 | Développement (via conda spark_env) |
 | Java 17 | Requis pour Spark |
@@ -54,7 +69,7 @@ Reviews.csv (500 000 avis)
 Installer dans cet ordre :
 
 1. **Docker Desktop** → https://www.docker.com/products/docker-desktop
-2. **Anaconda** → https://www.anaconda.com/download (pour gérer les environnements Python)
+2. **Anaconda** → https://www.anaconda.com/download
 3. **Java 17 (Temurin)** → https://adoptium.net/temurin/releases/?version=17&os=windows&arch=x64&package=jdk
 4. **winutils.exe** (requis pour Spark sur Windows) :
    - Télécharger `winutils.exe` et `hadoop.dll` depuis https://github.com/cdarlint/winutils/tree/master/hadoop-3.3.6/bin
@@ -69,6 +84,7 @@ pip install pyspark==3.5.1
 pip install kafka-python
 pip install pandas
 pip install pymongo
+pip install mlflow==2.11.0
 ```
 
 > ⚠️ Utiliser Python 3.10 — PySpark 3.5.1 est incompatible avec Python 3.11+
@@ -91,21 +107,22 @@ https://www.kaggle.com/snap/amazon-fine-food-reviews
 
 Placer le fichier à la racine du projet.
 
-### Étape 3 — Créer les dossiers Airflow
+### Étape 3 — Créer les dossiers requis
 
 ```powershell
-mkdir dags, logs, plugins
+mkdir dags, logs, plugins, models
 ```
 
-### Étape 4 — Copier le DAG Airflow
+### Étape 4 — Copier les DAGs Airflow
 
 ```powershell
 copy amazon_pipeline_dag.py dags\
+copy dag_model_retraining.py dags\
 ```
 
-### Étape 5 — Créer le fichier `run_spark.cmd` (Windows)
+> Les deux DAGs coexistent dans `dags/` et s'exécutent indépendamment.
 
-Créer un fichier `run_spark.cmd` à la racine du projet via PowerShell :
+### Étape 5 — Créer le fichier `run_spark.cmd` (Windows)
 
 ```powershell
 @"
@@ -128,13 +145,16 @@ docker-compose up -d
 ```
 
 Vérifier que ces services sont Running :
-- Zookeeper → port 2181
-- Kafka → port 9092
-- MongoDB → port 27017
-- PostgreSQL (Airflow) → port interne
-- Mongo Express → http://localhost:8081
-- Kafka UI → http://localhost:8080
-- **Airflow Webserver → http://localhost:8082**
+
+| Service | URL | Description |
+|---|---|---|
+| Zookeeper | port 2181 | Gestionnaire Kafka |
+| Kafka | port 9092 | Message broker |
+| MongoDB | port 27017 | Base de données |
+| Mongo Express | http://localhost:8081 | Interface MongoDB |
+| Kafka UI | http://localhost:8080 | Interface Kafka |
+| Airflow | http://localhost:8082 | Orchestration |
+| MLflow | http://localhost:5000 | Tracking ML |
 
 ### Étape 7 — Créer l'utilisateur Airflow
 
@@ -154,8 +174,6 @@ Aller sur http://localhost:8080 → Topics → **+ Add a Topic**
 
 ### Étape 9 — Lancer Spark Streaming
 
-Ouvrir un nouveau terminal :
-
 ```powershell
 conda activate spark_env
 .\run_spark.cmd
@@ -166,8 +184,6 @@ Tu dois voir : `[BATCH X] ✅ product_metrics mis à jour`
 
 ### Étape 10 — Lancer le Producer
 
-Ouvrir un autre terminal :
-
 ```powershell
 conda activate spark_env
 python producer.py
@@ -177,20 +193,17 @@ Tu verras :
 ```
 [PRODUCER] ✅ Avis 511683 envoyé | Produit: B000FFLXPG | Score: 5/5
 [PRODUCER] ✅ Avis 511684 envoyé | Produit: B000FFLXPG | Score: 4/5
-...
 ```
 
 ### Étape 11 — Vérifier dans MongoDB
 
-Ouvrir http://localhost:8081
-
-Tu dois voir dans `amazon_db` :
+Ouvrir http://localhost:8081 → base `amazon_db`
 
 | Collection | Description |
 |---|---|
 | `reviews` | Avis + prédictions en temps réel |
 | `product_metrics` | Stats agrégées par produit |
-| `model_metrics` | Accuracy du modèle |
+| `model_metrics` | Accuracy + historique réentraînements |
 
 ---
 
@@ -202,7 +215,7 @@ Terminal 2 → conda activate spark_env && .\run_spark.cmd
 Terminal 3 → conda activate spark_env && python producer.py
 ```
 
-Airflow redémarre **automatiquement** avec Docker.
+Airflow et MLflow redémarrent **automatiquement** avec Docker.
 
 ---
 
@@ -212,39 +225,42 @@ Airflow redémarre **automatiquement** avec Docker.
 Amazon-Reviews-Sentiment-Analysis-BigData/
 │
 ├── dags/
-│   └── amazon_pipeline_dag.py     ← DAG Airflow
-├── logs/                          ← Logs Airflow (auto-généré)
-├── plugins/                       ← Plugins Airflow (vide)
+│   ├── amazon_pipeline_dag.py       ← DAG 1 : Monitoring (@hourly)
+│   └── dag_model_retraining.py      ← DAG 2 : Réentraînement ML (@daily)
+│
+├── logs/                            ← Logs Airflow (auto-généré)
+├── plugins/                         ← Plugins Airflow (vide)
 │
 ├── models/
-│   ├── preprocessing_pipeline/    ← Pipeline TF-IDF sauvegardé
-│   └── final_best_model/          ← Modèle LogisticRegression sauvegardé
+│   ├── preprocessing_pipeline/      ← Pipeline TF-IDF (Notebook 02)
+│   └── final_best_model/            ← Modèle LogisticRegression (Notebook 03)
 │
 ├── notebooks/
-│   ├── 01_EDA.ipynb               ← Exploration des données
-│   ├── 02_Preprocessing_P.ipynb   ← Préparation des données
-│   └── 03_Model_Training_.ipynb   ← Entraînement du modèle
+│   ├── 01_EDA.ipynb                 ← Exploration des données
+│   ├── 02_Preprocessing_P.ipynb     ← Préparation + pipeline TF-IDF
+│   └── 03_Model_Training_.ipynb     ← Entraînement + évaluation + export
 │
-├── spark_streaming.py             ← Script principal Spark
-├── producer.py                    ← Envoi des avis vers Kafka
-├── docker-compose.yml             ← Configuration Docker (+ Airflow)
-├── run_spark.cmd                  ← Lancement Spark (Windows)
+├── spark_streaming.py               ← Script principal Spark
+├── producer.py                      ← Envoi des avis vers Kafka
+├── docker-compose.yml               ← Configuration Docker
+├── run_spark.cmd                    ← Lancement Spark (Windows)
 └── README.md
 ```
 
 ---
 
-## Apache Airflow — Orchestration du pipeline
+## Apache Airflow — Deux DAGs
 
 ### Accès
 
 - URL : **http://localhost:8082**
-- Login : `admin`
-- Mot de passe : `admin`
+- Login : `admin` / Mot de passe : `admin`
 
-### DAG : `amazon_reviews_pipeline`
+---
 
-Le DAG s'exécute automatiquement **toutes les heures** (`@hourly`) et effectue 4 vérifications :
+### DAG 1 : `amazon_reviews_pipeline` — Monitoring (@hourly)
+
+S'exécute automatiquement **toutes les heures** pour vérifier que le pipeline fonctionne.
 
 ```
 check_kafka → check_mongodb → pipeline_health_report → check_product_metrics
@@ -254,10 +270,10 @@ check_kafka → check_mongodb → pipeline_health_report → check_product_metri
 |---|---|
 | `check_kafka` | Vérifie que Kafka est accessible sur `kafka:29092` |
 | `check_mongodb` | Vérifie MongoDB et compte les reviews traités |
-| `pipeline_health_report` | Rapport complet : % positifs/négatifs/neutres + accuracy |
+| `pipeline_health_report` | Rapport : % positifs/négatifs/neutres + accuracy |
 | `check_product_metrics` | Top 3 produits les plus commentés |
 
-### Exemple de rapport dans les logs Airflow
+**Exemple de rapport dans les logs :**
 
 ```
 =================================================
@@ -269,37 +285,154 @@ Negatifs         : 1252 (27.5%)
 Neutres          : 1023 (22.5%)
 Accuracy modele  : 0.75
 =================================================
-
 OK 306 produits dans product_metrics
   - B004HOLD60 : 106 reviews | 57% positifs
   - B001E4S88W :  29 reviews | 55% positifs
-  - B001E5E3S0 :  28 reviews | 46% positifs
 ```
+
+---
+
+### DAG 2 : `daily_sentiment_retraining` — Réentraînement ML (@daily 3h)
+
+S'exécute automatiquement **chaque nuit à 3h** pour améliorer le modèle ML.
+
+```
+extract_and_prepare_data
+        │
+        ▼
+retrain_model ──────────────────► MLflow : params + métriques + modèle loggés
+        │
+        ▼
+evaluate_and_promote ───────────► MLflow : tag promoted=True/False
+        │  ├── F1 amélioré > 1.5% → remplace final_best_model/
+        │  └── pas d'amélioration  → modèle actuel conservé
+        ▼
+update_model_metrics ───────────► MongoDB model_metrics + lien MLflow
+        │
+        ▼
+cleanup (toujours exécuté)
+```
+
+| Tâche | Rôle |
+|---|---|
+| `extract_and_prepare_data` | Lit MongoDB `reviews`, nettoie le texte |
+| `retrain_model` | Réentraîne LR, logue dans MLflow |
+| `evaluate_and_promote` | Compare candidat vs production |
+| `update_model_metrics` | Écrit résultats dans MongoDB + lien MLflow |
+| `cleanup` | Supprime fichiers temporaires |
+
+**Exemple de résumé dans les logs Airflow :**
+
+```
+====================================================
+  RÉSUMÉ RÉENTRAÎNEMENT QUOTIDIEN
+====================================================
+  Run name           : retrain_20260511_0300
+  Samples utilisés   : 4,552
+  F1 Macro nouveau   : 0.8421
+  F1 Macro ancien    : 0.8415
+  Amélioration       : +0.07%
+  Recall Négatif     : 0.7589
+  Modèle promu       : ✅ OUI
+  MLflow UI          : http://localhost:5000/#/experiments/1/runs/...
+====================================================
+```
+
+**Déclencher manuellement pour la démo :**
+
+Airflow UI → DAG `daily_sentiment_retraining` → bouton **▶ Trigger DAG**
+
+> ⚠️ Condition : MongoDB doit contenir au moins **300 reviews** dans la collection `reviews`.
+> Si vide, Task 1 s'arrête avec `300 samples minimum` — comportement normal.
 
 ### Voir les logs d'une tâche
 
 1. Aller sur http://localhost:8082
-2. Cliquer sur `amazon_reviews_pipeline`
+2. Cliquer sur le DAG souhaité
 3. Cliquer sur l'onglet **Graph**
 4. Cliquer sur une tâche verte
 5. Cliquer sur **Logs**
 
-### Architecture Docker Airflow
+---
 
-| Service | Rôle |
+## MLflow — Tracking des expériences ML
+
+### Accès
+
+- URL : **http://localhost:5000**
+- Aucun login requis
+
+### Ce que MLflow enregistre (rempli automatiquement par DAG 2)
+
+**Paramètres loggés par run :**
+
+| Paramètre | Valeur |
 |---|---|
-| `airflow-webserver` | Interface web → port 8082 |
-| `airflow-scheduler` | Exécute les DAGs automatiquement |
-| `airflow-init` | Initialise la base de données (premier démarrage) |
-| `postgres` | Base de données interne Airflow |
+| algorithm | LogisticRegression |
+| maxIter | 60 |
+| regParam | 0.05 |
+| neg_threshold | 0.35 |
+| n_training | nombre d'exemples utilisés |
+| class_weight | N/(K*count) |
 
-> ⚠️ Airflow communique avec Kafka et MongoDB via les **noms de services Docker** (`kafka:29092`, `mongodb:27017`) et non via `localhost`.
+**Métriques loggées par run :**
+
+| Métrique | Description |
+|---|---|
+| f1_macro | F1 Score macro (métrique principale) |
+| accuracy | Accuracy globale |
+| f1_negative | F1 Score classe Négatif |
+| f1_neutral | F1 Score classe Neutre |
+| f1_positive | F1 Score classe Positif |
+| recall_negative | Recall Négatif (métrique business) |
+| previous_f1 | F1 du modèle en production avant ce run |
+| f1_improvement | Amélioration en % vs modèle précédent |
+| train_time_seconds | Durée d'entraînement |
+
+**Tags :**
+
+| Tag | Valeur possible |
+|---|---|
+| promoted | True / False |
+| decision | PROMOTED / REJECTED |
+
+### Naviguer dans MLflow
+
+1. Ouvrir http://localhost:5000
+2. Cliquer sur l'expérience **Amazon_Sentiment_Retraining**
+3. Voir la liste de tous les runs (un par nuit)
+4. Cliquer sur un run pour voir :
+   - Tous les paramètres et métriques
+   - Le graphique d'évolution des métriques
+   - Le modèle sauvegardé comme artifact
+5. Comparer deux runs : sélectionner 2 runs → **Compare**
+
+---
+
+## Modèle ML
+
+- **Algorithme** : Logistic Regression multinomiale (PySpark MLlib)
+- **Features** : TF-IDF unigrammes + bigrammes (~20 000 features)
+- **Split** : 80% train / 10% validation / 10% test (stratifié)
+- **Class weights** : N / (K × count) — compense le déséquilibre 78% Positif
+- **Threshold Négatif** : 0.35 au lieu de 0.50 par défaut
+  - *Raison* : dans un système d'alerte temps réel, rater une review négative
+    est plus coûteux que déclencher une fausse alerte
+- **Stockage** : `models/final_best_model/`
+
+### Labels de sentiment
+
+| Score | Sentiment | Classe |
+|---|---|---|
+| 1 ou 2 | Négatif | 0 |
+| 3 | Neutre | 1 |
+| 4 ou 5 | Positif | 2 |
 
 ---
 
 ## Collections MongoDB
 
-### 1. `reviews` — Données brutes + prédictions
+### 1. `reviews` — Données brutes + prédictions (écrit par Spark)
 
 ```json
 {
@@ -317,7 +450,7 @@ OK 306 produits dans product_metrics
 }
 ```
 
-### 2. `product_metrics` — Stats par produit
+### 2. `product_metrics` — Stats par produit (écrit par Spark)
 
 ```json
 {
@@ -331,8 +464,9 @@ OK 306 produits dans product_metrics
 }
 ```
 
-### 3. `model_metrics` — Performance du modèle
+### 3. `model_metrics` — Performance du modèle (écrit par Spark + DAG 2)
 
+**Document Spark (temps réel) :**
 ```json
 {
   "accuracy": 0.87,
@@ -342,32 +476,43 @@ OK 306 produits dans product_metrics
 }
 ```
 
+**Document DAG 2 (réentraînement) :**
+```json
+{
+  "type": "retraining",
+  "f1_macro": 0.8421,
+  "accuracy": 0.8614,
+  "recall_negative": 0.7589,
+  "previous_f1": 0.8415,
+  "improvement_pct": 0.07,
+  "promoted": true,
+  "mlflow_run_id": "a3f8b2c1d4e5f6a7",
+  "mlflow_url": "http://localhost:5000/#/experiments/1/runs/a3f8b2c1d4e5f6a7",
+  "run_name": "retrain_20260511_0300",
+  "n_training_samples": 4552,
+  "neg_threshold": 0.35,
+  "retrained_at": "2026-05-11T03:02:14Z"
+}
+```
+
 ---
 
-## Données
+## Architecture Docker — Services
 
-Source : https://www.kaggle.com/snap/amazon-fine-food-reviews
-
-- 568 454 avis sur des produits alimentaires Amazon
-- Période : plus de 10 ans
-- Colonnes : Id, ProductId, UserId, ProfileName, Score, Time, Summary, Text
-
-### Labels de sentiment
-
-| Score | Sentiment |
-|---|---|
-| 1 ou 2 | Négatif |
-| 3 | Neutre |
-| 4 ou 5 | Positif |
-
----
-
-## Modèle ML
-
-- **Algorithme** : Logistic Regression (multinomiale)
-- **Features** : TF-IDF unigrammes + bigrammes
-- **Split** : 80% train / 10% validation / 10% test
-- **Stockage** : `models/final_best_model/`
+| Service | Port | Description |
+|---|---|---|
+| `zookeeper` | 2181 | Gestionnaire cluster Kafka |
+| `kafka` | 9092 | Message broker |
+| `kafka-ui` | 8080 | Interface web Kafka |
+| `mongodb` | 27017 | Base de données NoSQL |
+| `mongo-express` | 8081 | Interface web MongoDB |
+| `producer` | — | Envoi reviews vers Kafka (Docker) |
+| `spark-streaming` | — | Inférence temps réel (Docker) |
+| `mlflow` | 5000 | Tracking ML |
+| `postgres` | interne | Base de données Airflow |
+| `airflow-webserver` | 8082 | Interface web Airflow |
+| `airflow-scheduler` | — | Planificateur des DAGs |
+| `airflow-init` | — | Initialisation (premier démarrage) |
 
 ---
 
@@ -387,7 +532,7 @@ Solution : Télécharger `winutils.exe` et `hadoop.dll` depuis https://github.co
 
 ### Erreur `Python worker exited unexpectedly`
 
-Cause : incompatibilité Python 3.11 + PySpark. Utiliser Python 3.10 via conda :
+Cause : incompatibilité Python 3.11 + PySpark. Utiliser Python 3.10 :
 
 ```powershell
 conda create -n spark_env python=3.10 -y
@@ -397,7 +542,7 @@ pip install pyspark==3.5.1
 
 ### Erreur `ChecksumException`
 
-```bash
+```powershell
 del /s /q models\preprocessing_pipeline\metadata\.*.crc
 del /s /q models\preprocessing_pipeline\stages\*.crc
 del /s /q models\final_best_model\metadata\.*.crc
@@ -409,22 +554,31 @@ Créer le topic sur http://localhost:8080 → Topics → **+ Add a Topic**
 
 ### MongoDB vide après lancement
 
-Vérifier que `producer.py` et `run_spark.cmd` tournent dans leurs terminaux respectifs.
+Vérifier que `producer.py` et `run_spark.cmd` tournent dans leurs terminaux.
 
-### Airflow : Invalid login
+### MLflow : interface inaccessible
 
-Recréer l'utilisateur manuellement :
+Vérifier que le service est lancé :
 
 ```powershell
-docker exec -it amazon-reviews-sentiment-analysis-bigdata-airflow-webserver-1 airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@admin.com
+docker-compose ps mlflow
 ```
 
-### Airflow : DAG Import Error (pymongo manquant)
+Si absent, relancer :
 
-Ajouter dans `docker-compose.yml` sous `x-airflow-common > environment` :
+```powershell
+docker-compose up -d mlflow
+```
+
+### DAG 2 : `FileNotFoundError preprocessing_pipeline`
+
+Cause : le volume `./models:/opt/models` n'est pas dans `docker-compose.yml`.
+
+Solution : vérifier que `x-airflow-common` contient :
 
 ```yaml
-_PIP_ADDITIONAL_REQUIREMENTS: 'pymongo'
+volumes:
+  - ./models:/opt/models
 ```
 
 Puis relancer :
@@ -433,13 +587,46 @@ Puis relancer :
 docker-compose up -d --no-deps airflow-webserver airflow-scheduler
 ```
 
+### DAG 2 : `Seulement X samples (minimum=300)`
+
+Comportement **normal** si MongoDB est vide ou contient peu de données.
+Attendre que Spark Streaming ait traité au moins 300 reviews, puis déclencher le DAG manuellement depuis l'UI Airflow.
+
+### Airflow : DAG Import Error (module manquant)
+
+Vérifier que `_PIP_ADDITIONAL_REQUIREMENTS` dans `docker-compose.yml` contient :
+
+```yaml
+_PIP_ADDITIONAL_REQUIREMENTS: 'pymongo pyspark==3.5.1 mlflow==2.11.0'
+```
+
+Puis relancer :
+
+```powershell
+docker-compose up -d --no-deps airflow-webserver airflow-scheduler
+```
+
+### Airflow : Invalid login
+
+```powershell
+docker exec -it amazon-reviews-sentiment-analysis-bigdata-airflow-webserver-1 airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@admin.com
+```
+
 ### Airflow : DAG failed (Kafka inaccessible)
 
-Vérifier que le DAG utilise les noms de services Docker et non `localhost` :
+Vérifier que le DAG utilise les noms de services Docker :
 
 ```python
-KAFKA_HOST = "kafka"      # correct
-KAFKA_HOST = "localhost"  # incorrect depuis un conteneur Docker
+KAFKA_HOST = "kafka"      # ✅ correct depuis un conteneur Docker
+KAFKA_HOST = "localhost"  # ❌ incorrect depuis un conteneur Docker
 ```
 
 ---
+
+## Données
+
+Source : https://www.kaggle.com/snap/amazon-fine-food-reviews
+
+- 568 454 avis sur des produits alimentaires Amazon
+- Période : plus de 10 ans
+- Colonnes : Id, ProductId, UserId, ProfileName, Score, Time, Summary, Text
