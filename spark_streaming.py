@@ -51,6 +51,7 @@ KAFKA_BOOTSTRAP = "kafka:29092"           # ← listener interne Docker
 # ─────────────────────────────────────────────────────────────────
 spark = SparkSession.builder \
     .appName("AmazonReviewsFinal") \
+    .config("spark.sql.shuffle.partitions", "1") \
     .config("spark.driver.extraJavaOptions",   java_opts) \
     .config("spark.executor.extraJavaOptions", java_opts) \
     .config("spark.ui.host", "0.0.0.0") \
@@ -150,6 +151,9 @@ final_df = df_predictions \
         "predicted_sentiment", "confidence", "processed_at"
     )
 
+# Réduire à 1 partition — moins de surcharge Spark pour petits batches
+final_df = final_df.coalesce(1)
+
 # ─────────────────────────────────────────────────────────────────
 # foreachBatch — écriture MongoDB
 # CORRECTION : utiliser MONGO_URI (mongodb://mongodb:27017)
@@ -164,11 +168,12 @@ def process_batch(batch_df, batch_id):
     # ── Collection 1 : reviews ──────────────────────────────────
     batch_df.write \
         .format("mongodb") \
+        .option("uri",        MONGO_URI) \
         .option("database",   MONGO_DB) \
         .option("collection", "reviews") \
         .mode("append") \
         .save()
-    print(f"[BATCH {batch_id}] ✅ reviews stockés ({total} docs)")
+    print(f"[BATCH {batch_id}] ✅ reviews stockés ({total} docs)")  # total déjà calculé
 
     # ── Collection 2 : product_metrics ──────────────────────────
     product_metrics = batch_df.groupBy("ProductId").agg(
@@ -192,6 +197,7 @@ def process_batch(batch_df, batch_id):
 
     product_metrics.write \
         .format("mongodb") \
+        .option("uri",        MONGO_URI) \
         .option("database",   MONGO_DB) \
         .option("collection", "product_metrics") \
         .mode("append") \
@@ -199,6 +205,7 @@ def process_batch(batch_df, batch_id):
     print(f"[BATCH {batch_id}] ✅ product_metrics mis à jour")
 
     # ── Collection 3 : model_metrics ────────────────────────────
+    # total déjà calculé en haut du batch — pas de double count()
     correct = batch_df.filter(
         ((col("predicted_sentiment") == "positive") & (col("Score") >= 4)) |
         ((col("predicted_sentiment") == "negative") & (col("Score") <= 2)) |
@@ -216,6 +223,7 @@ def process_batch(batch_df, batch_id):
 
     model_metrics_df.write \
         .format("mongodb") \
+        .option("uri",        MONGO_URI) \
         .option("database",   MONGO_DB) \
         .option("collection", "model_metrics") \
         .mode("append") \
@@ -229,7 +237,7 @@ query = final_df.writeStream \
     .foreachBatch(process_batch) \
     .option("checkpointLocation", "./checkpoint_final") \
     .outputMode("append") \
-    .trigger(processingTime="5 seconds") \
+    .trigger(processingTime="1 seconds") \
     .start()
 
 print("✅ Spark Streaming démarré — en attente de messages Kafka...")
