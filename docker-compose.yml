@@ -1,5 +1,8 @@
 version: '3.8'
 
+# ─────────────────────────────────────────────────────────────────
+# Bloc commun Airflow (hérité par webserver, scheduler, init)
+# ─────────────────────────────────────────────────────────────────
 x-airflow-common: &airflow-common
   image: apache/airflow:2.8.1
   environment:
@@ -9,7 +12,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
-    _PIP_ADDITIONAL_REQUIREMENTS: 'pymongo' # Ajout de pymongo pour la connexion à MongoDB
+    _PIP_ADDITIONAL_REQUIREMENTS: 'pymongo'
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
@@ -19,22 +22,36 @@ x-airflow-common: &airflow-common
       condition: service_healthy
 
 services:
-  # ─── Services existants ───────────────────────────────────────
+
+  # ─────────────────────────────────────────────────────────────
+  # ZOOKEEPER
+  # ─────────────────────────────────────────────────────────────
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "bash", "-c", "zookeeper-shell localhost:2181 ls / > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
 
+  # ─────────────────────────────────────────────────────────────
+  # KAFKA
+  # ─────────────────────────────────────────────────────────────
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
     ports:
-      - "9092:9092"
+      - "9092:9092"       # accès depuis l'hôte Windows
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # PLAINTEXT     = pour l'hôte (localhost:9092)
+      # PLAINTEXT_INTERNAL = pour les conteneurs Docker (kafka:29092)
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
@@ -46,6 +63,9 @@ services:
       timeout: 10s
       retries: 10
 
+  # ─────────────────────────────────────────────────────────────
+  # KAFKA UI
+  # ─────────────────────────────────────────────────────────────
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     depends_on:
@@ -57,22 +77,38 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
 
+  # ─────────────────────────────────────────────────────────────
+  # MONGODB
+  # ─────────────────────────────────────────────────────────────
   mongodb:
     image: mongo:latest
     ports:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
 
+  # ─────────────────────────────────────────────────────────────
+  # MONGO EXPRESS
+  # ─────────────────────────────────────────────────────────────
   mongo-express:
     image: mongo-express
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy   # attend que MongoDB soit prêt
     ports:
       - "8081:8081"
     environment:
       ME_CONFIG_MONGODB_SERVER: mongodb
+    restart: on-failure              # relance si MongoDB n'est pas encore prêt
 
+  # ─────────────────────────────────────────────────────────────
+  # PRODUCER (service Docker permanent)
+  # ─────────────────────────────────────────────────────────────
   producer:
     build:
       context: .
@@ -82,6 +118,9 @@ services:
         condition: service_healthy
     restart: on-failure
 
+  # ─────────────────────────────────────────────────────────────
+  # SPARK STREAMING (service Docker permanent)
+  # ─────────────────────────────────────────────────────────────
   spark-streaming:
     build:
       context: .
@@ -90,12 +129,91 @@ services:
       kafka:
         condition: service_healthy
       mongodb:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./checkpoint_final:/app/checkpoint_final
+    ports:
+      - "4040:4040"                  # Spark UI → http://localhost:4040
     environment:
-      JAVA_TOOL_OPTIONS: --add-opens=java.base/javax.security.auth=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.sql/java.sql=ALL-UNNAMED
+      # Spark UI — bind sur 0.0.0.0 pour être accessible depuis l'hôte
+      SPARK_LOCAL_IP: "0.0.0.0"
+      SPARK_UI_PORT: "4040"
+      JAVA_TOOL_OPTIONS: >-
+        --add-opens=java.base/javax.security.auth=ALL-UNNAMED
+        --add-opens=java.base/java.lang=ALL-UNNAMED
+        --add-opens=java.base/java.net=ALL-UNNAMED
+        --add-opens=java.base/java.util=ALL-UNNAMED
+        --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
+        --add-opens=java.base/java.text=ALL-UNNAMED
+        --add-opens=java.sql/java.sql=ALL-UNNAMED
+    restart: on-failure
 
+  # ─────────────────────────────────────────────────────────────
+  # POSTGRESQL (base de données interne Airflow)
+  # ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+
+  # ─────────────────────────────────────────────────────────────
+  # AIRFLOW INIT (initialise la BDD — s'exécute une seule fois)
+  # ─────────────────────────────────────────────────────────────
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        pip install pymongo --quiet --user
+        airflow db migrate
+        airflow users create -u admin -p admin -f Admin -l User -r Admin -e admin@admin.com || true
+    restart: on-failure
+
+  # ─────────────────────────────────────────────────────────────
+  # AIRFLOW WEBSERVER  →  http://localhost:8082
+  # ─────────────────────────────────────────────────────────────
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8082:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: always
+
+  # ─────────────────────────────────────────────────────────────
+  # AIRFLOW SCHEDULER (exécute les DAGs automatiquement)
+  # ─────────────────────────────────────────────────────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always
+
+# ─────────────────────────────────────────────────────────────────
+# VOLUMES persistants
+# ─────────────────────────────────────────────────────────────────
 volumes:
   mongo-data: {}
   postgres-data: {}

@@ -1,23 +1,31 @@
-FROM apache/spark:3.5.0
+FROM apache/spark:3.5.1
 
 USER root
 
-RUN pip install pymongo kafka-python
+# Installer Python3, pip et TOUTES les dépendances nécessaires
+RUN apt-get update && apt-get install -y python3 python3-pip && \
+    pip3 install --no-cache-dir \
+        numpy \
+        pyspark==3.5.1 \
+        pymongo==4.6.1 \
+        kafka-python==2.0.2 && \
+    apt-get clean
 
-COPY spark_streaming.py /app/
+# Pointer Spark vers le bon Python
+ENV PYSPARK_PYTHON=/usr/bin/python3
+ENV PYSPARK_DRIVER_PYTHON=/usr/bin/python3
+
+# Copier le script et les modèles
+COPY spark_streaming.py /app/spark_streaming.py
 COPY models/ /app/models/
 
 WORKDIR /app
 
-ENV JAVA_TOOL_OPTIONS="--add-opens=java.base/javax.security.auth=ALL-UNNAMED \
-    --add-opens=java.base/java.lang=ALL-UNNAMED \
-    --add-opens=java.base/java.net=ALL-UNNAMED \
-    --add-opens=java.base/java.util=ALL-UNNAMED \
-    --add-opens=java.base/java.util.concurrent=ALL-UNNAMED \
-    --add-opens=java.base/java.text=ALL-UNNAMED \
-    --add-opens=java.sql/java.sql=ALL-UNNAMED"
+ENV JAVA_TOOL_OPTIONS="--add-opens=java.base/javax.security.auth=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.sql/java.sql=ALL-UNNAMED"
 
 CMD ["/opt/spark/bin/spark-submit", \
      "--packages", \
-     "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.mongodb.spark:mongo-spark-connector_2.12:10.3.0", \
+     "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.mongodb.spark:mongo-spark-connector_2.12:10.3.0", \
+     "--conf", "spark.ui.host=0.0.0.0", \
+     "--conf", "spark.ui.port=4040", \
      "/app/spark_streaming.py"]
