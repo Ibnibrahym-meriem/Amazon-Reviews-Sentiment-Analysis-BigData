@@ -3,3 +3,8 @@ __pycache__/
 *.pyc 
 *.db 
 .env
+Reviews.csv
+logs/
+checkpoint_final/
+*.crc
+*.parquet

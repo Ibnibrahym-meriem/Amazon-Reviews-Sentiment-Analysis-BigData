@@ -541,4 +541,4 @@ def model_health():
     return render_template("model_health.html")
 
 if __name__ == "__main__":
-    app.run(debug=False, threaded=True, port=5000)
+    app.run(debug=False, threaded=True, port=5050)

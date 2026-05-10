@@ -1,0 +1,23 @@
+FROM apache/airflow:2.8.1
+
+USER root
+
+# Install Java 17 (required for PySpark)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        openjdk-17-jdk-headless \
+        procps \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set JAVA_HOME
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+USER airflow
+
+# Install Python dependencies once (baked into image — no slow startup installs)
+RUN pip install --no-cache-dir \
+    pymongo==4.10.1 \
+    pyspark==3.5.1 \
+    mlflow==2.11.0

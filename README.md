@@ -42,7 +42,16 @@ Reviews.csv (568 454 avis)
                         └── MLflow (tracking ML)
                             ├── Expérience : Amazon_Sentiment_Retraining
                             ├── Logs : params, metrics, modèle
-                            └── UI : http://localhost:5000
+                            └── UI : http://localhost:5001
+                                │
+                                └── Flask Dashboard (visualisation)
+                                    ├── Page d'accueil : KPIs temps réel
+                                    ├── Analyse par produit : stats détaillées
+                                    ├── Flux live : avis en temps réel
+                                    ├── Liste de surveillance : produits suivis
+                                    └── Santé du modèle : métriques ML
+                                        │
+                                        └── UI : http://localhost:5050
 ```
 
 ---
@@ -85,6 +94,7 @@ pip install kafka-python
 pip install pandas
 pip install pymongo
 pip install mlflow==2.11.0
+pip install flask
 ```
 
 > ⚠️ Utiliser Python 3.10 — PySpark 3.5.1 est incompatible avec Python 3.11+
@@ -154,7 +164,8 @@ Vérifier que ces services sont Running :
 | Mongo Express | http://localhost:8081 | Interface MongoDB |
 | Kafka UI | http://localhost:8080 | Interface Kafka |
 | Airflow | http://localhost:8082 | Orchestration |
-| MLflow | http://localhost:5000 | Tracking ML |
+| MLflow | http://localhost:5001 | Tracking ML |
+| Flask Dashboard | http://localhost:5050 | Visualisation données |
 
 ### Étape 7 — Créer l'utilisateur Airflow
 
@@ -195,15 +206,15 @@ Tu verras :
 [PRODUCER] ✅ Avis 511684 envoyé | Produit: B000FFLXPG | Score: 4/5
 ```
 
-### Étape 11 — Vérifier dans MongoDB
+### Étape 12 — Lancer le Dashboard Flask
 
-Ouvrir http://localhost:8081 → base `amazon_db`
+```powershell
+conda activate spark_env
+pip install flask
+python app.py
+```
 
-| Collection | Description |
-|---|---|
-| `reviews` | Avis + prédictions en temps réel |
-| `product_metrics` | Stats agrégées par produit |
-| `model_metrics` | Accuracy + historique réentraînements |
+Le dashboard sera accessible sur **http://localhost:5050**
 
 ---
 
@@ -213,6 +224,7 @@ Ouvrir http://localhost:8081 → base `amazon_db`
 Terminal 1 → docker-compose up -d
 Terminal 2 → conda activate spark_env && .\run_spark.cmd
 Terminal 3 → conda activate spark_env && python producer.py
+Terminal 4 → conda activate spark_env && python app.py
 ```
 
 Airflow et MLflow redémarrent **automatiquement** avec Docker.
@@ -224,9 +236,20 @@ Airflow et MLflow redémarrent **automatiquement** avec Docker.
 ```
 Amazon-Reviews-Sentiment-Analysis-BigData/
 │
+├── app.py                          ← Dashboard Flask (port 5050)
+├── requirements.txt                ← Dépendances Flask
+│
 ├── dags/
 │   ├── amazon_pipeline_dag.py       ← DAG 1 : Monitoring (@hourly)
 │   └── dag_model_retraining.py      ← DAG 2 : Réentraînement ML (@daily)
+│
+├── templates/                       ← Templates HTML du dashboard
+│   ├── base.html
+│   ├── index.html                   ← Page d'accueil + KPIs
+│   ├── product.html                 ← Analyse par produit
+│   ├── live.html                    ← Flux temps réel
+│   ├── watchlist.html               ← Produits surveillés
+│   └── model_health.html            ← Métriques ML
 │
 ├── logs/                            ← Logs Airflow (auto-généré)
 ├── plugins/                         ← Plugins Airflow (vide)
@@ -244,6 +267,9 @@ Amazon-Reviews-Sentiment-Analysis-BigData/
 ├── producer.py                      ← Envoi des avis vers Kafka
 ├── docker-compose.yml               ← Configuration Docker
 ├── run_spark.cmd                    ← Lancement Spark (Windows)
+├── Dockerfile.airflow               ← Image Airflow personnalisée
+├── Dockerfile.producer              ← Image Producer Kafka
+├── Dockerfile.spark                 ← Image Spark Streaming
 └── README.md
 ```
 
@@ -334,7 +360,7 @@ cleanup (toujours exécuté)
   Amélioration       : +0.07%
   Recall Négatif     : 0.7589
   Modèle promu       : ✅ OUI
-  MLflow UI          : http://localhost:5000/#/experiments/1/runs/...
+  MLflow UI          : http://localhost:5001/#/experiments/1/runs/...
 ====================================================
 ```
 
@@ -359,7 +385,7 @@ Airflow UI → DAG `daily_sentiment_retraining` → bouton **▶ Trigger DAG**
 
 ### Accès
 
-- URL : **http://localhost:5000**
+- URL : **http://localhost:5001**
 - Aucun login requis
 
 ### Ce que MLflow enregistre (rempli automatiquement par DAG 2)
@@ -398,7 +424,7 @@ Airflow UI → DAG `daily_sentiment_retraining` → bouton **▶ Trigger DAG**
 
 ### Naviguer dans MLflow
 
-1. Ouvrir http://localhost:5000
+1. Ouvrir http://localhost:5001
 2. Cliquer sur l'expérience **Amazon_Sentiment_Retraining**
 3. Voir la liste de tous les runs (un par nuit)
 4. Cliquer sur un run pour voir :
@@ -406,6 +432,44 @@ Airflow UI → DAG `daily_sentiment_retraining` → bouton **▶ Trigger DAG**
    - Le graphique d'évolution des métriques
    - Le modèle sauvegardé comme artifact
 5. Comparer deux runs : sélectionner 2 runs → **Compare**
+
+---
+
+## Flask Dashboard — Visualisation des données
+
+### Accès
+
+- URL : **http://localhost:5050**
+- Aucun login requis
+
+### Pages disponibles
+
+| Page | Description |
+|---|---|
+| **Accueil** (`/`) | KPIs temps réel : nombre total d'avis, distribution des sentiments, métriques du modèle |
+| **Analyse Produit** (`/product`) | Statistiques détaillées par produit (recherche par ProductId) |
+| **Flux Live** (`/live`) | Avis en temps réel avec prédictions de sentiment |
+| **Liste de surveillance** (`/watchlist`) | Produits suivis avec alertes sur nouveaux avis |
+| **Santé du modèle** (`/model-health`) | Historique des métriques ML et évolution des performances |
+
+### APIs REST
+
+Le dashboard expose plusieurs endpoints API pour l'intégration :
+
+| Endpoint | Description |
+|---|---|
+| `/api/kpis` | KPIs globaux (total avis, % positifs/négatifs/neutres) |
+| `/api/watchlist` | Liste des produits surveillés |
+| `/api/model-current` | Métriques du modèle actuel |
+| `/api/model-history` | Historique des réentraînements |
+| `/stream` | Server-Sent Events pour le flux temps réel |
+
+### Fonctionnalités
+
+- **Temps réel** : Mise à jour automatique des données depuis MongoDB
+- **Responsive** : Interface adaptée mobile et desktop
+- **Interactive** : Graphiques et tableaux dynamiques
+- **Filtrage** : Recherche par produit, date, sentiment
 
 ---
 
@@ -487,7 +551,7 @@ Airflow UI → DAG `daily_sentiment_retraining` → bouton **▶ Trigger DAG**
   "improvement_pct": 0.07,
   "promoted": true,
   "mlflow_run_id": "a3f8b2c1d4e5f6a7",
-  "mlflow_url": "http://localhost:5000/#/experiments/1/runs/a3f8b2c1d4e5f6a7",
+  "mlflow_url": "http://localhost:5001/#/experiments/1/runs/a3f8b2c1d4e5f6a7",
   "run_name": "retrain_20260511_0300",
   "n_training_samples": 4552,
   "neg_threshold": 0.35,
@@ -508,11 +572,39 @@ Airflow UI → DAG `daily_sentiment_retraining` → bouton **▶ Trigger DAG**
 | `mongo-express` | 8081 | Interface web MongoDB |
 | `producer` | — | Envoi reviews vers Kafka (Docker) |
 | `spark-streaming` | — | Inférence temps réel (Docker) |
-| `mlflow` | 5000 | Tracking ML |
+| `mlflow` | 5001 | Tracking ML |
 | `postgres` | interne | Base de données Airflow |
 | `airflow-webserver` | 8082 | Interface web Airflow |
 | `airflow-scheduler` | — | Planificateur des DAGs |
 | `airflow-init` | — | Initialisation (premier démarrage) |
+
+---
+
+## Architecture Docker — Images personnalisées
+
+Le projet utilise 3 images Docker personnalisées pour les services complexes :
+
+### Dockerfile.airflow
+
+Image Airflow étendue avec :
+- **Java 17** (requis pour PySpark)
+- **Python packages** : `pymongo`, `pyspark`, `mlflow`
+- **Configuration** : variables d'environnement pour Java et PySpark
+
+### Dockerfile.producer
+
+Image légère pour l'envoi des données :
+- **Base** : `python:3.10-slim`
+- **Packages** : `kafka-python`, `pandas`
+- **Fichiers** : `producer.py`, `Reviews.csv`
+
+### Dockerfile.spark
+
+Image Spark complète pour le streaming :
+- **Base** : `apache/spark:3.5.1`
+- **Java 17** et dépendances Python
+- **Connecteurs** : Kafka, MongoDB
+- **Configuration** : UI Spark sur port 4040
 
 ---
 
@@ -569,6 +661,31 @@ Si absent, relancer :
 ```powershell
 docker-compose up -d mlflow
 ```
+
+### Dashboard Flask : port 5050 inaccessible
+
+Vérifier que `app.py` tourne :
+
+```powershell
+netstat -ano | findstr :5050
+```
+
+Si rien, relancer :
+
+```powershell
+conda activate spark_env
+python app.py
+```
+
+### Dashboard Flask : erreur de connexion MongoDB
+
+Vérifier que MongoDB est accessible :
+
+```powershell
+docker-compose ps mongodb
+```
+
+Puis vérifier la connexion dans les logs de `app.py`.
 
 ### DAG 2 : `FileNotFoundError preprocessing_pipeline`
 

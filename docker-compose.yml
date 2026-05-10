@@ -1,12 +1,14 @@
 version: '3.8'
 
 # ════════════════════════════════════════════════════════════════════════
-# docker-compose.yml — VERSION FINALE avec MLflow
-# Basé sur l'architecture  + ajout MLflow + volumes modèles
+# docker-compose.yml — VERSION COMPLÈTE ET FONCTIONNELLE
+# Avec MLflow, Airflow, Kafka, Spark, MongoDB
 # ════════════════════════════════════════════════════════════════════════
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.8.1
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
@@ -14,25 +16,24 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
-    # pymongo  → DAG monitoring (déjà présent)
-    # pyspark  → DAG réentraînement (Task 2 et 3)
-    # mlflow   → tracking des expériences
-    _PIP_ADDITIONAL_REQUIREMENTS: 'pymongo pyspark==3.5.1 mlflow==2.11.0'
     JAVA_HOME: '/usr/lib/jvm/java-17-openjdk-amd64'
+    PYSPARK_PYTHON: '/usr/local/bin/python'
+    PYSPARK_DRIVER_PYTHON: '/usr/local/bin/python'
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
-    # AJOUT — modèles ML partagés entre Airflow et Spark local
     - ./models:/opt/models
   depends_on:
     postgres:
       condition: service_healthy
+  networks:
+    - amazon_network
 
 services:
 
   # ──────────────────────────────────────────────────────────────────────
-  # ZOOKEEPER 
+  # ZOOKEEPER
   # ──────────────────────────────────────────────────────────────────────
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -40,17 +41,23 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # KAFKA 
+  # KAFKA
   # ──────────────────────────────────────────────────────────────────────
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
     ports:
       - "9092:9092"
     environment:
@@ -70,7 +77,7 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # KAFKA UI 
+  # KAFKA UI
   # ──────────────────────────────────────────────────────────────────────
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -87,7 +94,7 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # MONGODB 
+  # MONGODB
   # ──────────────────────────────────────────────────────────────────────
   mongodb:
     image: mongo:latest
@@ -96,21 +103,28 @@ services:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
     networks:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # MONGO EXPRESS 
+  # MONGO EXPRESS
   # ──────────────────────────────────────────────────────────────────────
   mongo-express:
     image: mongo-express
     container_name: mongo_express
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     ports:
       - "8081:8081"
     environment:
       ME_CONFIG_MONGODB_SERVER: mongodb
+    restart: on-failure
     networks:
       - amazon_network
 
@@ -141,10 +155,9 @@ services:
       kafka:
         condition: service_healthy
       mongodb:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./checkpoint_final:/app/checkpoint_final
-      # Accès aux modèles pour le streaming
       - ./models:/opt/models
     ports:
       - "4040:4040"
@@ -159,19 +172,19 @@ services:
         --add-opens=java.base/java.util.concurrent=ALL-UNNAMED
         --add-opens=java.base/java.text=ALL-UNNAMED
         --add-opens=java.sql/java.sql=ALL-UNNAMED
+    restart: on-failure
     networks:
       - amazon_network
 
   # ══════════════════════════════════════════════════════════════════════
-  # MLFLOW — NOUVEAU SERVICE DOCKER POUR LE TRACKING DES EXPÉRIENCES
-  # UI : http://localhost:5000
-  # Stockage : SQLite dans le volume mlflow-data (persistant)
+  # MLFLOW — Tracking des expériences ML
+  # UI : http://localhost:5001
   # ══════════════════════════════════════════════════════════════════════
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.11.0
     container_name: mlflow_server
     ports:
-      - "5000:5000"
+      - "5001:5000"
     volumes:
       - mlflow-data:/mlflow
     command: >
@@ -190,7 +203,7 @@ services:
       retries: 5
 
   # ──────────────────────────────────────────────────────────────────────
-  # POSTGRESQL — Backend Airflow 
+  # POSTGRESQL — Base de données interne Airflow
   # ──────────────────────────────────────────────────────────────────────
   postgres:
     image: postgres:13
@@ -210,28 +223,29 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # AIRFLOW INIT — initialise la BDD et crée l'utilisateur admin (s'exécute une seule fois)
+  # AIRFLOW INIT
   # ──────────────────────────────────────────────────────────────────────
   airflow-init:
     <<: *airflow-common
     container_name: airflow_init
-    command: >
-      bash -c "
-        airflow db migrate &&
-        airflow users create
-          --username admin
-          --password admin
-          --firstname Admin
-          --lastname User
-          --role Admin
-          --email admin@admin.com
-      "
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@admin.com || true
     restart: "no"
     networks:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # AIRFLOW WEBSERVER 
+  # AIRFLOW WEBSERVER
+  # UI : http://localhost:8082
   # ──────────────────────────────────────────────────────────────────────
   airflow-webserver:
     <<: *airflow-common
@@ -254,7 +268,7 @@ services:
       - amazon_network
 
   # ──────────────────────────────────────────────────────────────────────
-  # AIRFLOW SCHEDULER (exécute les DAGs automatiquement)
+  # AIRFLOW SCHEDULER
   # ──────────────────────────────────────────────────────────────────────
   airflow-scheduler:
     <<: *airflow-common
@@ -270,15 +284,15 @@ services:
       - amazon_network
 
 # ════════════════════════════════════════════════════════════════════════
-# VOLUMES
+# VOLUMES PERSISTANTS
 # ════════════════════════════════════════════════════════════════════════
 volumes:
   mongo-data: {}
   postgres-data: {}
-  mlflow-data: {}       
+  mlflow-data: {}
 
 # ════════════════════════════════════════════════════════════════════════
-# NETWORK — tous les services communiquent par nom de service
+# RÉSEAU
 # ════════════════════════════════════════════════════════════════════════
 networks:
   amazon_network:
