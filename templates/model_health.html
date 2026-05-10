@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block title %}Model Health{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <div>
+    <div class="page-title">Model Health Dashboard</div>
+    <div class="page-sub">MLflow tracking — Model performance & retraining history</div>
+  </div>
+  <div class="topbar-right">
+    <a href="{{ mlflow_uri }}" target="_blank" class="badge badge-accent" style="text-decoration:none;">
+      <i class="fa-solid fa-flask"></i> Open MLflow
+    </a>
+  </div>
+</div>
+
+<div class="content">
+  <!-- KPI Cards for Model Health -->
+  <div class="kpi-grid" id="modelCards">
+    <div class="kpi-card fade-in">
+      <div class="kpi-label">Current Model Version</div>
+      <div class="kpi-value" id="modelVersion" style="font-size:18px;">—</div>
+      <div class="kpi-sub">run name</div>
+    </div>
+    <div class="kpi-card fade-in">
+      <div class="kpi-label">Current F1 Score</div>
+      <div class="kpi-value" id="f1Score" style="color:var(--green);">—</div>
+      <div class="kpi-sub">macro F1</div>
+    </div>
+    <div class="kpi-card fade-in">
+      <div class="kpi-label">Last Retraining Date</div>
+      <div class="kpi-value" id="retrainDate" style="font-size:18px;">—</div>
+      <div class="kpi-sub">latest update</div>
+    </div>
+    <div class="kpi-card fade-in">
+      <div class="kpi-label">Training Samples</div>
+      <div class="kpi-value" id="trainSamples">—</div>
+      <div class="kpi-sub">used for training</div>
+    </div>
+  </div>
+
+  <!-- Second row of cards -->
+  <div class="kpi-grid" style="margin-top:-6px;">
+    <div class="kpi-card fade-in">
+      <div class="kpi-label">Current Accuracy</div>
+      <div class="kpi-value" id="accuracy" style="color:var(--blue);">—</div>
+      <div class="kpi-sub">model accuracy</div>
+    </div>
+    <div class="kpi-card fade-in">
+      <div class="kpi-label">Recall (Negative)</div>
+      <div class="kpi-value" id="recallNeg" style="color:var(--red);">—</div>
+      <div class="kpi-sub">negative class recall</div>
+    </div>
+    <div class="kpi-card fade-in">
+      <div class="kpi-label">Status</div>
+      <div class="kpi-value">
+        <span id="statusBadge" class="pill pill-neu">—</span>
+      </div>
+      <div class="kpi-sub">promotion decision</div>
+    </div>
+    <div class="kpi-card fade-in">
+      <div class="kpi-label">Improvement</div>
+      <div class="kpi-value" id="improvement" style="font-size:18px;">—</div>
+      <div class="kpi-sub">vs previous model</div>
+    </div>
+  </div>
+
+  <!-- Evolution Chart -->
+  <div class="grid-2" style="margin-bottom:18px;">
+    <div class="card fade-in">
+      <div class="card-title">
+        <span><i class="fa-solid fa-chart-line" style="color:var(--accent);margin-right:7px;"></i>F1 Score Evolution</span>
+        <span class="badge badge-accent">over time</span>
+      </div>
+      <div id="f1Chart"></div>
+    </div>
+    <div class="card fade-in">
+      <div class="card-title">
+        <span><i class="fa-solid fa-chart-line" style="color:var(--accent);margin-right:7px;"></i>Accuracy Evolution</span>
+        <span class="badge badge-blue">over time</span>
+      </div>
+      <div id="accuracyChart"></div>
+    </div>
+  </div>
+
+  <!-- Retraining History Table -->
+  <div class="card fade-in">
+    <div class="card-title">
+      <span><i class="fa-solid fa-clock-rotate-left" style="color:var(--accent);margin-right:7px;"></i>Retraining History</span>
+      <span class="badge badge-accent">last 20 runs</span>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="stbl" id="historyTable">
+        <thead>
+          <tr>
+            <th>Run Name</th>
+            <th>Date</th>
+            <th>F1 Score</th>
+            <th>Accuracy</th>
+            <th>Recall (Neg)</th>
+            <th>Improvement</th>
+            <th>Samples</th>
+            <th>Decision</th>
+            <th>MLflow</th>
+          </tr>
+        </thead>
+        <tbody id="historyBody">
+          <tr><td colspan="9" style="text-align:center;">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+// Fetch model data and render charts
+async function loadModelData() {
+    try {
+        // Get current model stats
+        const currentRes = await fetch('/api/model-current');
+        const current = await currentRes.json();
+        
+        if (!current.error) {
+            document.getElementById('modelVersion').textContent = current.run_name || current.run_id?.slice(0,8) || '—';
+            document.getElementById('f1Score').textContent = current.f1_score ? current.f1_score + '%' : '—';
+            document.getElementById('accuracy').textContent = current.accuracy ? current.accuracy + '%' : '—';
+            document.getElementById('recallNeg').textContent = current.recall_negative ? current.recall_negative + '%' : '—';
+            document.getElementById('trainSamples').textContent = current.n_training_samples?.toLocaleString() || '—';
+            document.getElementById('improvement').textContent = (current.f1_improvement || 0) > 0 ? 
+                `+${current.f1_improvement}%` : `${current.f1_improvement || 0}%`;
+            
+            // Format date
+            if (current.retrained_at) {
+                const date = new Date(current.retrained_at);
+                document.getElementById('retrainDate').textContent = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+            }
+            
+            // Update status badge
+            const statusBadge = document.getElementById('statusBadge');
+            if (current.status === 'PROMOTED') {
+                statusBadge.className = 'pill pill-pos';
+                statusBadge.innerHTML = '<i class="fa-solid fa-circle-check"></i> Promoted';
+            } else if (current.status === 'REJECTED') {
+                statusBadge.className = 'pill pill-neg';
+                statusBadge.innerHTML = '<i class="fa-solid fa-circle-xmark"></i> Rejected';
+            } else {
+                statusBadge.className = 'pill pill-neu';
+                statusBadge.innerHTML = '<i class="fa-solid fa-hourglass-half"></i> ' + (current.status || 'Pending');
+            }
+        }
+        
+        // Get history
+        const historyRes = await fetch('/api/model-history?limit=20');
+        const history = await historyRes.json();
+        
+        // Render history table
+        const tbody = document.getElementById('historyBody');
+        if (history.length > 0) {
+            tbody.innerHTML = history.map(run => `
+                <tr>
+                    <td style="font-family:var(--font-mono);font-size:11px;">${run.run_name || run.run_id.slice(0,8)}</td>
+                    <td>${new Date(run.time).toLocaleDateString()}</td>
+                    <td style="font-family:var(--font-mono);color:var(--green);">${run.f1_score}%</td>
+                    <td style="font-family:var(--font-mono);">${run.accuracy}%</td>
+                    <td style="font-family:var(--font-mono);">${run.recall_negative || '-'}%</td>
+                    <td style="font-family:var(--font-mono);color:${run.improvement > 0 ? 'var(--green)' : 'var(--red)'};">${run.improvement > 0 ? '+' : ''}${run.improvement || 0}%</td>
+                    <td style="font-family:var(--font-mono);">${run.n_samples?.toLocaleString() || '-'}</td>
+                    <td>
+                        <span class="pill ${run.status === 'PROMOTED' ? 'pill-pos' : (run.status === 'REJECTED' ? 'pill-neg' : 'pill-neu')}" style="font-size:10px;">
+                            ${run.status || 'PENDING'}
+                        </span>
+                    </td>
+                    <td>
+                        <a href="${run.mlflow_url}" target="_blank" style="color:var(--accent);">
+                            <i class="fa-solid fa-external-link"></i>
+                        </a>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        
+        // Prepare chart data
+        const dates = history.map(r => new Date(r.time).toLocaleDateString());
+        const f1Scores = history.map(r => r.f1_score);
+        const accuracies = history.map(r => r.accuracy);
+        
+        const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+        const textColor = currentTheme === 'dark' ? '#7d8590' : '#64748b';
+        
+        // Destroy existing charts if any
+        if (window.f1Chart) window.f1Chart.destroy();
+        if (window.accuracyChart) window.accuracyChart.destroy();
+        
+        // F1 Score Chart
+        window.f1Chart = new ApexCharts(document.querySelector('#f1Chart'), {
+            chart: { type: 'line', height: 280, toolbar: { show: false }, background: 'transparent' },
+            series: [{ name: 'F1 Score', data: f1Scores }],
+            xaxis: { categories: dates, labels: { style: { colors: textColor, fontSize: '10px' } } },
+            yaxis: { min: 0, max: 100, labels: { style: { colors: textColor, fontSize: '10px' } } },
+            colors: ['#16a34a'],
+            stroke: { curve: 'smooth', width: 2 },
+            markers: { size: 4 },
+            tooltip: { theme: currentTheme }
+        });
+        window.f1Chart.render();
+        
+        // Accuracy Chart
+        window.accuracyChart = new ApexCharts(document.querySelector('#accuracyChart'), {
+            chart: { type: 'line', height: 280, toolbar: { show: false }, background: 'transparent' },
+            series: [{ name: 'Accuracy', data: accuracies }],
+            xaxis: { categories: dates, labels: { style: { colors: textColor, fontSize: '10px' } } },
+            yaxis: { min: 0, max: 100, labels: { style: { colors: textColor, fontSize: '10px' } } },
+            colors: ['#0ea5e9'],
+            stroke: { curve: 'smooth', width: 2 },
+            markers: { size: 4 },
+            tooltip: { theme: currentTheme }
+        });
+        window.accuracyChart.render();
+        
+    } catch(e) {
+        console.error('Error loading model data:', e);
+        document.getElementById('historyBody').innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--red);">Error loading data. Make sure MLflow is running.</td></tr>';
+    }
+}
+
+// Load data on page load
+document.addEventListener('DOMContentLoaded', loadModelData);
+
+// Refresh every 30 seconds
+setInterval(loadModelData, 30000);
+</script>
+{% endblock %}

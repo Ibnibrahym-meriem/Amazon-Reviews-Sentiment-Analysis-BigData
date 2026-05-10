@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}Watchlist{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <div>
+    <div class="page-title">Product Health Watchlist</div>
+    <div class="page-sub">OK / WATCH / ALERT decision intelligence — ranked by health score</div>
+  </div>
+  <div class="topbar-right">
+    <div class="live-badge" style="background:var(--yellow-dim);border-color:var(--yellow-border);color:var(--yellow);">
+      <i class="fa-solid fa-triangle-exclamation" style="font-size:10px;"></i>
+      Decision System
+    </div>
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- Summary KPIs -->
+  <div class="kpi-grid" style="margin-bottom:18px;">
+    <div class="kpi-card fade-in" style="animation-delay:0s;">
+      <div class="kpi-label">Products in ALERT</div>
+      <div class="kpi-value" style="color:var(--red);">{{ data.alerts }}</div>
+      <div class="kpi-sub">need immediate action</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.05s;">
+      <div class="kpi-label">Products in WATCH</div>
+      <div class="kpi-value" style="color:var(--yellow);">{{ data.watches }}</div>
+      <div class="kpi-sub">monitor closely</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.1s;">
+      <div class="kpi-label">Products OK</div>
+      <div class="kpi-value" style="color:var(--green);">{{ data.oks }}</div>
+      <div class="kpi-sub">healthy products</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.15s;">
+      <div class="kpi-label">Total Monitored</div>
+      <div class="kpi-value">{{ data.products|length }}</div>
+      <div class="kpi-sub">across all products</div>
+    </div>
+  </div>
+
+  <!-- Watchlist table -->
+  <div class="card fade-in" style="animation-delay:0.2s;margin-bottom:18px;">
+    <div class="card-title">
+      <span>
+        <i class="fa-solid fa-list-check" style="color:var(--accent);margin-right:7px;"></i>
+        All Products — Ranked by Health Score
+      </span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="badge badge-accent">
+          {% if current_sort == 'health_score' and current_order == 'asc' %}Worst First
+          {% elif current_sort == 'health_score' and current_order == 'desc' %}Best First
+          {% elif current_sort == 'total' %}Most Reviews
+          {% elif current_sort == 'avg_score' %}Highest Rated
+          {% else %}Worst First{% endif %}
+        </span>
+        <div style="position:relative;display:inline-block;">
+          <button id="filterDropdownBtn" onclick="toggleFilterDropdown()"
+                  style="background:var(--bg3);border:1px solid var(--border2);border-radius:20px;padding:5px 13px;color:var(--text2);font-size:11.5px;cursor:pointer;font-family:var(--font);font-weight:500;display:flex;align-items:center;gap:6px;transition:all 0.15s;">
+            <i class="fa-solid fa-sliders"></i> Sort
+          </button>
+          <div id="filterDropdown"
+               style="display:none;position:absolute;right:0;top:36px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:6px;min-width:200px;z-index:100;box-shadow:var(--shadow-lg);">
+            <a href="/watchlist?sort=health_score&order=asc"  class="sort-opt {% if current_sort == 'health_score' and current_order == 'asc' %}sort-opt-active{% endif %}">
+              <i class="fa-solid fa-triangle-exclamation" style="width:14px;color:var(--red);"></i> Worst Health First
+            </a>
+            <a href="/watchlist?sort=health_score&order=desc" class="sort-opt {% if current_sort == 'health_score' and current_order == 'desc' %}sort-opt-active{% endif %}">
+              <i class="fa-solid fa-circle-check" style="width:14px;color:var(--green);"></i> Best Health First
+            </a>
+            <div style="height:1px;background:var(--border);margin:4px 0;"></div>
+            <a href="/watchlist?sort=total&order=desc"        class="sort-opt {% if current_sort == 'total' %}sort-opt-active{% endif %}">
+              <i class="fa-solid fa-chart-bar" style="width:14px;color:var(--blue);"></i> Most Reviews
+            </a>
+            <a href="/watchlist?sort=avg_score&order=desc"    class="sort-opt {% if current_sort == 'avg_score' %}sort-opt-active{% endif %}">
+              <i class="fa-solid fa-star" style="width:14px;color:var(--yellow);"></i> Highest Rated
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="overflow-x:auto;">
+      <table class="stbl" style="min-width:720px;">
+        <thead>
+          <tr>
+            <th style="width:36px;">#</th>
+            <th>Product ID</th>
+            <th>Reviews</th>
+            <th style="min-width:200px;">Health Score</th>
+            <th>Status</th>
+            <th>Avg Rating</th>
+            <th>Pos / Neg</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for product in data.products %}
+          <tr>
+            <td style="color:var(--text4);font-size:11px;font-family:var(--font-mono);">{{ loop.index }}</td>
+            <td><span style="font-family:var(--font-mono);font-size:12px;color:var(--text);">{{ product.product_id }}</span></td>
+            <td style="font-family:var(--font-mono);color:var(--text2);">{{ product.total }}</td>
+            <td>
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div class="prog-wrap" style="flex:1;height:7px;">
+                  {% set hp = ((product.health_score + 1) / 2 * 100) %}
+                  <div class="prog-fill" style="width:{{ hp|round(0)|int }}%;background:{% if product.health_score > 0.5 %}var(--green){% elif product.health_score > 0.2 %}var(--yellow){% else %}var(--red){% endif %};"></div>
+                </div>
+                <span style="font-family:var(--font-mono);font-size:11px;min-width:38px;color:{% if product.health_score > 0.5 %}var(--green){% elif product.health_score > 0.2 %}var(--yellow){% else %}var(--red){% endif %};">{{ product.health_score }}</span>
+              </div>
+            </td>
+            <td>
+              <span class="pill {% if product.status == 'OK' %}pill-pos{% elif product.status == 'WATCH' %}pill-neu{% else %}pill-neg{% endif %}">
+                {% if product.status == 'OK' %}<i class="fa-solid fa-circle-check"></i>
+                {% elif product.status == 'WATCH' %}<i class="fa-solid fa-eye"></i>
+                {% else %}<i class="fa-solid fa-triangle-exclamation"></i>{% endif %}
+                {{ product.status }}
+              </span>
+            </td>
+            <td>
+              <div style="display:flex;align-items:center;gap:5px;">
+                <span class="stars" style="font-size:11px;">
+                  {% set avg = product.avg_score|default(0)|float %}
+                  {% for i in range(avg|round|int) %}★{% endfor %}{% for i in range(5 - avg|round|int) %}☆{% endfor %}
+                </span>
+                <span style="font-family:var(--font-mono);font-size:11px;color:var(--text3);">{{ product.avg_score }}</span>
+              </div>
+            </td>
+            <td style="font-family:var(--font-mono);font-size:11px;">
+              <span style="color:var(--green);">{{ product.positive_pct }}%</span>
+              <span style="color:var(--text4);margin:0 3px;">/</span>
+              <span style="color:var(--red);">{{ product.negative_pct }}%</span>
+            </td>
+            <td>
+              <a href="/product?id={{ product.product_id }}"
+                 style="color:var(--accent);text-decoration:none;font-size:11px;font-weight:600;white-space:nowrap;padding:5px 12px;border-radius:20px;border:1px solid var(--accent-dim);background:var(--accent-dim);transition:all 0.15s;">
+                Analyze <i class="fa-solid fa-arrow-right" style="font-size:9px;"></i>
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Decision Rules + Formula -->
+  <div class="grid-2">
+    <div class="card fade-in" style="animation-delay:0.25s;">
+      <div class="card-title">
+        <span><i class="fa-solid fa-gavel" style="color:var(--accent);margin-right:7px;"></i>Decision Rules</span>
+      </div>
+      <div class="insight-card green">
+        <i class="fa-solid fa-circle-check" style="color:var(--green);margin-top:2px;font-size:15px;"></i>
+        <div>
+          <div class="insight-label" style="color:var(--green);">OK — Health Score &gt; 0.5</div>
+          <div class="insight-text">Product is performing well. Customers are satisfied. Maintain current strategy and leverage positive signals in marketing.</div>
+        </div>
+      </div>
+      <div class="insight-card yellow">
+        <i class="fa-solid fa-eye" style="color:var(--yellow);margin-top:2px;font-size:15px;"></i>
+        <div>
+          <div class="insight-label" style="color:var(--yellow);">WATCH — Health Score 0.2 – 0.5</div>
+          <div class="insight-text">Monitor sentiment trends closely. Investigate recurring negative feedback. Consider targeted improvements.</div>
+        </div>
+      </div>
+      <div class="insight-card red">
+        <i class="fa-solid fa-triangle-exclamation" style="color:var(--red);margin-top:2px;font-size:15px;"></i>
+        <div>
+          <div class="insight-label" style="color:var(--red);">ALERT — Health Score &lt; 0.2</div>
+          <div class="insight-text">Immediate action required. High volume of negative reviews indicates serious product quality or delivery issues.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card fade-in" style="animation-delay:0.3s;">
+      <div class="card-title">
+        <span><i class="fa-solid fa-calculator" style="color:var(--accent);margin-right:7px;"></i>Health Score Formula</span>
+      </div>
+      <div class="formula-box">health = (positive &minus; negative) &divide; total</div>
+      <div style="color:var(--text3);font-size:12px;line-height:1.7;margin-top:14px;">
+        Range from <span style="color:var(--red);font-weight:600;">-1.0</span> (all negative) to <span style="color:var(--green);font-weight:600;">+1.0</span> (all positive).
+      </div>
+      <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;text-align:center;">
+        <div style="background:var(--red-dim);border:1px solid var(--red-border);border-radius:12px;padding:14px 8px;">
+          <div style="font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--red);">&lt;0.2</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:4px;text-transform:uppercase;letter-spacing:0.07em;">Alert</div>
+        </div>
+        <div style="background:var(--yellow-dim);border:1px solid var(--yellow-border);border-radius:12px;padding:14px 8px;">
+          <div style="font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--yellow);">0.2–0.5</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:4px;text-transform:uppercase;letter-spacing:0.07em;">Watch</div>
+        </div>
+        <div style="background:var(--green-dim);border:1px solid var(--green-border);border-radius:12px;padding:14px 8px;">
+          <div style="font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--green);">&gt;0.5</div>
+          <div style="font-size:10px;color:var(--text3);margin-top:4px;text-transform:uppercase;letter-spacing:0.07em;">OK</div>
+        </div>
+      </div>
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);font-size:11px;color:var(--text3);line-height:1.6;">
+        The metric captures the <em>net</em> sentiment balance, normalized by review volume. It is robust to datasets where positive reviews dominate in absolute numbers but negative patterns are emerging.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<style>
+.sort-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  text-decoration: none;
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 8px;
+  transition: all 0.12s;
+}
+.sort-opt:hover     { background: var(--bg3); color: var(--text); }
+.sort-opt-active    { background: var(--accent-dim); color: var(--accent); }
+</style>
+
+<script>
+function toggleFilterDropdown() {
+  var d = document.getElementById('filterDropdown');
+  d.style.display = (d.style.display === 'none' || !d.style.display) ? 'block' : 'none';
+}
+
+document.addEventListener('click', function(e) {
+  var d   = document.getElementById('filterDropdown');
+  var btn = document.getElementById('filterDropdownBtn');
+  if (d && btn && !btn.contains(e.target) && !d.contains(e.target)) {
+    d.style.display = 'none';
+  }
+});
+</script>
+{% endblock %}

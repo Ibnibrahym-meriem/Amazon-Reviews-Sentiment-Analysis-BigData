@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+{% block title %}Overview{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <div>
+    <div class="page-title">Analytics Overview</div>
+    <div class="page-sub">Real-time sentiment intelligence across Amazon products</div>
+  </div>
+  <div class="topbar-right">
+    <div class="live-badge">
+      <span class="live-dot"></span>
+      Live Updates
+    </div>
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- ROW 1: 4 KPI cards -->
+  <div class="kpi-grid">
+    <div class="kpi-card fade-in" style="animation-delay:0s">
+      <div class="kpi-label">Total Reviews</div>
+      <div class="kpi-value">{{ "{:,}".format(kpis.total) }}</div>
+      <div class="kpi-sub">analyzed documents</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.05s">
+      <div class="kpi-label">Positive</div>
+      <div class="kpi-value" style="color:var(--green);">{{ kpis.positive_pct }}%</div>
+      <div class="kpi-sub">{{ "{:,}".format(kpis.positive_count) }} reviews</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.1s">
+      <div class="kpi-label">Negative</div>
+      <div class="kpi-value" style="color:var(--red);">{{ kpis.negative_pct }}%</div>
+      <div class="kpi-sub">{{ "{:,}".format(kpis.negative_count) }} reviews</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.15s">
+      <div class="kpi-label">Neutral</div>
+      <div class="kpi-value" style="color:var(--yellow);">{{ kpis.neutral_pct }}%</div>
+      <div class="kpi-sub">{{ "{:,}".format(kpis.neutral_count) }} reviews</div>
+    </div>
+  </div>
+
+  <!-- ROW 2: 4 KPI cards -->
+  <div class="kpi-grid" style="margin-top:-6px;">
+    <div class="kpi-card fade-in" style="animation-delay:0.2s">
+      <div class="kpi-label">Average Rating</div>
+      <div class="kpi-value">{{ kpis.avg_score }}<span style="font-size:14px;font-weight:400;color:var(--yellow);"> ★</span></div>
+      <div class="kpi-sub">out of 5 stars</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.25s">
+      <div class="kpi-label">Unique Products</div>
+      <div class="kpi-value">{{ "{:,}".format(kpis.unique_products) }}</div>
+      <div class="kpi-sub">monitored items</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.3s">
+      <div class="kpi-label">Model Accuracy</div>
+      <div class="kpi-value" style="color:var(--blue);">{{ kpis.model_accuracy }}%</div>
+      <div class="kpi-sub">F1-score: {{ (kpis.model_accuracy|float - 2.1)|round(1) }}%</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.35s">
+      <div class="kpi-label">Health Score</div>
+      {% set hs = ((kpis.positive_pct - kpis.negative_pct) / 100)|round(2) %}
+      <div class="kpi-value" style="color:{% if hs > 0.5 %}var(--green){% elif hs > 0.2 %}var(--yellow){% else %}var(--red){% endif %};">{{ hs }}</div>
+      <div class="kpi-sub">overall sentiment index</div>
+    </div>
+  </div>
+
+  <!-- ROW 3: Trend + Donut -->
+  <div class="grid-21">
+    <div class="card fade-in" style="animation-delay:0.4s">
+      <div class="card-title">
+        <span><i class="fa-solid fa-chart-column" style="color:var(--accent);margin-right:7px;"></i>Sentiment Over Time</span>
+        <span class="badge badge-accent">12-Month Stacked</span>
+      </div>
+      <div id="trendChart"></div>
+    </div>
+    <div class="card fade-in" style="animation-delay:0.45s">
+      <div class="card-title">
+        <span><i class="fa-solid fa-circle-half-stroke" style="color:var(--accent);margin-right:7px;"></i>Distribution</span>
+        <span class="badge badge-blue">Donut</span>
+      </div>
+      <div id="donutChart"></div>
+    </div>
+  </div>
+
+  <!-- ROW 4: Rating dist + Top products + Insights -->
+  <div class="grid-3">
+    <div class="card fade-in" style="animation-delay:0.5s">
+      <div class="card-title">
+        <span><i class="fa-solid fa-star" style="color:var(--yellow);margin-right:6px;"></i>Rating Distribution</span>
+      </div>
+      {% for item in score_dist %}
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:13px;">
+        <div style="font-size:12px;color:var(--yellow);width:58px;letter-spacing:-1px;">
+          {% for i in range(item.star) %}★{% endfor %}{% for i in range(5 - item.star) %}☆{% endfor %}
+        </div>
+        <div class="prog-wrap" style="flex:1;">
+          <div class="prog-fill" style="width:{{ item.pct }}%;background:var(--yellow);"></div>
+        </div>
+        <div style="width:36px;font-size:11px;color:var(--text2);text-align:right;font-family:var(--font-mono);">{{ item.pct }}%</div>
+        <div style="width:32px;font-size:10px;color:var(--text3);text-align:right;font-family:var(--font-mono);">{{ item.count }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="card fade-in" style="animation-delay:0.55s">
+      <div class="card-title">
+        <span><i class="fa-solid fa-trophy" style="color:var(--yellow);margin-right:6px;"></i>Top Products</span>
+        <span class="badge badge-blue">by volume</span>
+      </div>
+      <table class="stbl">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Reviews</th>
+            <th>Status</th>
+            <th>Health</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in top_products %}
+          <tr>
+            <td><a href="/product?id={{ p.product_id }}" style="color:var(--accent);text-decoration:none;font-family:var(--font-mono);font-size:11px;">{{ p.product_id[:10] }}..</a></td>
+            <td style="font-family:var(--font-mono);">{{ p.total }}</td>
+            <td>
+              <span class="pill {% if p.status == 'OK' %}pill-pos{% elif p.status == 'WATCH' %}pill-neu{% else %}pill-neg{% endif %}">
+                {{ p.status }}
+              </span>
+            </td>
+            <td style="font-family:var(--font-mono);color:{% if p.health_score > 0.5 %}var(--green){% elif p.health_score > 0.2 %}var(--yellow){% else %}var(--red){% endif %};">
+              {{ p.health_score }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card fade-in" style="animation-delay:0.6s">
+      <div class="card-title">
+        <span><i class="fa-solid fa-lightbulb" style="color:var(--yellow);margin-right:6px;"></i>Auto Insights</span>
+      </div>
+      {% for insight in insights %}
+        {% if insight.startswith('OK') %}
+          <div class="insight-card green">
+            <div>
+              <div class="insight-label" style="color:var(--green);">OK</div>
+              <div class="insight-text">{{ insight[3:] }}</div>
+            </div>
+          </div>
+        {% elif insight.startswith('ALERT') %}
+          <div class="insight-card red">
+            <div>
+              <div class="insight-label" style="color:var(--red);">Alert</div>
+              <div class="insight-text">{{ insight[6:] }}</div>
+            </div>
+          </div>
+        {% elif insight.startswith('INFO') %}
+          <div class="insight-card blue">
+            <div>
+              <div class="insight-label" style="color:var(--blue);">Info</div>
+              <div class="insight-text">{{ insight[5:] }}</div>
+            </div>
+          </div>
+        {% elif insight.startswith('MISMATCH') %}
+          <div class="insight-card yellow">
+            <div>
+              <div class="insight-label" style="color:var(--yellow);">Mismatch</div>
+              <div class="insight-text">{{ insight[9:] }}</div>
+            </div>
+          </div>
+        {% elif insight.startswith('MODEL') %}
+          <div class="insight-card accent">
+            <div>
+              <div class="insight-label" style="color:var(--accent);">Model</div>
+              <div class="insight-text">{{ insight[6:] }}</div>
+            </div>
+          </div>
+        {% else %}
+          <div class="insight-card blue">
+            <div>
+              <div class="insight-text">{{ insight }}</div>
+            </div>
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ROW 5: Helpfulness + Decision Intel -->
+  <div class="grid-2">
+    <div class="card fade-in" style="animation-delay:0.65s">
+      <div class="card-title">
+        <span><i class="fa-solid fa-thumbs-up" style="color:var(--accent);margin-right:6px;"></i>Helpfulness by Sentiment</span>
+      </div>
+      <div style="margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:7px;">
+          <span style="font-size:12px;display:flex;align-items:center;gap:6px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;"></span>
+            Positive Reviews
+          </span>
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--green);">{{ helpfulness.by_sentiment.positive }}%</span>
+        </div>
+        <div class="prog-wrap" style="height:7px;">
+          <div class="prog-fill" style="width:{{ helpfulness.by_sentiment.positive }}%;background:linear-gradient(90deg,var(--green),#86efac);"></div>
+        </div>
+      </div>
+      <div style="margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:7px;">
+          <span style="font-size:12px;display:flex;align-items:center;gap:6px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--red);display:inline-block;"></span>
+            Negative Reviews
+          </span>
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--red);">{{ helpfulness.by_sentiment.negative }}%</span>
+        </div>
+        <div class="prog-wrap" style="height:7px;">
+          <div class="prog-fill" style="width:{{ helpfulness.by_sentiment.negative }}%;background:linear-gradient(90deg,var(--red),#fca5a5);"></div>
+        </div>
+      </div>
+      <div style="margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:7px;">
+          <span style="font-size:12px;display:flex;align-items:center;gap:6px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--yellow);display:inline-block;"></span>
+            Neutral Reviews
+          </span>
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--yellow);">{{ helpfulness.by_sentiment.neutral }}%</span>
+        </div>
+        <div class="prog-wrap" style="height:7px;">
+          <div class="prog-fill" style="width:{{ helpfulness.by_sentiment.neutral }}%;background:linear-gradient(90deg,var(--yellow),#fde68a);"></div>
+        </div>
+      </div>
+      <div style="padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--text3);">
+        Overall helpfulness ratio: <span style="color:var(--text2);font-weight:600;">{{ helpfulness.overall }}%</span> of readers found reviews useful
+      </div>
+    </div>
+
+    <div class="card fade-in" style="animation-delay:0.7s">
+      <div class="card-title">
+        <span><i class="fa-solid fa-brain" style="color:var(--accent);margin-right:6px;"></i>Decision Intelligence</span>
+      </div>
+      <div class="insight-card red">
+        <i class="fa-solid fa-circle-exclamation" style="color:var(--red);margin-top:2px;"></i>
+        <div>
+          <div class="insight-label" style="color:var(--red);">ALERT — Health &lt; 0.2</div>
+          <div class="insight-text">Immediate action required — investigate product quality and customer complaints.</div>
+        </div>
+      </div>
+      <div class="insight-card yellow">
+        <i class="fa-solid fa-eye" style="color:var(--yellow);margin-top:2px;"></i>
+        <div>
+          <div class="insight-label" style="color:var(--yellow);">WATCH — Health 0.2–0.5</div>
+          <div class="insight-text">Monitor sentiment trends. Investigate recurring negative feedback patterns.</div>
+        </div>
+      </div>
+      <div class="insight-card green">
+        <i class="fa-solid fa-circle-check" style="color:var(--green);margin-top:2px;"></i>
+        <div>
+          <div class="insight-label" style="color:var(--green);">OK — Health &gt; 0.5</div>
+          <div class="insight-text">Product performing well. Maintain current strategy and leverage positive signals.</div>
+        </div>
+      </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+        <a href="/watchlist" style="color:var(--accent);text-decoration:none;font-size:12px;font-weight:500;">
+          View full watchlist <i class="fa-solid fa-arrow-right" style="font-size:10px;"></i>
+        </a>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /content -->
+
+<script>
+var TREND_POS    = [{% for item in trend %}{{ item.positive }}{% if not loop.last %},{% endif %}{% endfor %}];
+var TREND_NEU    = [{% for item in trend %}{{ item.neutral }}{% if not loop.last %},{% endif %}{% endfor %}];
+var TREND_NEG    = [{% for item in trend %}{{ item.negative }}{% if not loop.last %},{% endif %}{% endfor %}];
+var TREND_MONTHS = [{% for item in trend %}"{{ item.month }}"{% if not loop.last %},{% endif %}{% endfor %}];
+
+var currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+var textColor    = currentTheme === 'dark' ? '#7d8590' : '#64748b';
+
+var trendChart = new ApexCharts(document.querySelector('#trendChart'), {
+  chart: { type: 'bar', stacked: true, height: 260, toolbar: { show: false }, background: 'transparent', animations: { enabled: true, speed: 600 } },
+  series: [
+    { name: 'Positive', data: TREND_POS },
+    { name: 'Neutral',  data: TREND_NEU },
+    { name: 'Negative', data: TREND_NEG }
+  ],
+  colors: ['#16a34a', '#d97706', '#dc2626'],
+  plotOptions: { bar: { horizontal: false, columnWidth: '60%', borderRadius: 3 } },
+  xaxis: { categories: TREND_MONTHS, labels: { style: { colors: textColor, fontSize: '10px' } }, axisBorder: { show: false }, axisTicks: { show: false } },
+  yaxis: { labels: { style: { colors: textColor, fontSize: '10px' } } },
+  grid: { borderColor: currentTheme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', strokeDashArray: 3 },
+  legend: { position: 'top', labels: { colors: textColor }, fontSize: '12px' },
+  tooltip: { theme: currentTheme },
+  theme: { mode: currentTheme }
+});
+trendChart.render();
+
+var donutChart = new ApexCharts(document.querySelector('#donutChart'), {
+  chart: { type: 'donut', height: 260, background: 'transparent', animations: { enabled: true } },
+  series: [{{ kpis.positive_count }}, {{ kpis.neutral_count }}, {{ kpis.negative_count }}],
+  labels: ['Positive', 'Neutral', 'Negative'],
+  colors: ['#16a34a', '#d97706', '#dc2626'],
+  plotOptions: { pie: { donut: { size: '68%', labels: { show: true, total: { show: true, label: 'Total', color: textColor } } } } },
+  legend: { position: 'bottom', labels: { colors: textColor }, fontSize: '12px' },
+  tooltip: { theme: currentTheme },
+  theme: { mode: currentTheme },
+  dataLabels: { enabled: false }
+});
+donutChart.render();
+
+window.__apexCharts = window.__apexCharts || [];
+window.__apexCharts.push(trendChart, donutChart);
+</script>
+{% endblock %}

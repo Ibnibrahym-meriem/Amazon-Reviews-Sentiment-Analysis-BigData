@@ -1,0 +1,464 @@
+{% extends "base.html" %}
+{% block title %}Product Analysis{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <div>
+    <div class="page-title">Product Analysis</div>
+    <div class="page-sub">Deep-dive into product sentiment, trends, and review quality</div>
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- Search bar -->
+  <div style="margin-bottom:22px;" class="fade-in">
+    <form method="GET" action="/product" style="display:flex;gap:10px;align-items:center;">
+      <div style="position:relative;flex:1;max-width:520px;">
+        <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:15px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:13px;pointer-events:none;"></i>
+        <input type="text" name="id" value="{{ product_id }}"
+               placeholder="Enter Product ID (e.g., B000FFLXPG)"
+               style="width:100%;background:var(--bg2);border:1px solid var(--border2);border-radius:40px;padding:12px 18px 12px 42px;color:var(--text);font-size:13px;font-family:var(--font-mono);outline:none;transition:all 0.2s;box-shadow:var(--shadow-sm);">
+      </div>
+      <button type="submit" style="background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;border-radius:40px;padding:12px 26px;color:#fff;font-weight:600;font-size:13px;cursor:pointer;white-space:nowrap;box-shadow:0 4px 14px rgba(14,165,233,0.35);transition:all 0.2s;">
+        Analyze <i class="fa-solid fa-arrow-right" style="font-size:11px;"></i>
+      </button>
+    </form>
+
+    <!-- Product chips -->
+    <div style="margin-top:14px;">
+      <div style="font-size:10.5px;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:var(--text4);margin-bottom:8px;">
+        Top Products by Review Volume
+      </div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;">
+        {% for pid in all_products[:10] %}
+        <a href="/product?id={{ pid }}"
+           style="padding:5px 13px;border-radius:20px;font-size:11px;font-family:var(--font-mono);text-decoration:none;border:1px solid {% if pid == product_id %}var(--accent){% else %}var(--border){% endif %};color:{% if pid == product_id %}var(--accent){% else %}var(--text3){% endif %};background:{% if pid == product_id %}var(--accent-dim){% else %}var(--bg2){% endif %};transition:all 0.15s;box-shadow:var(--shadow-sm);">
+          {{ pid }}
+        </a>
+        {% endfor %}
+        {% if all_products|length > 10 %}
+        <span style="font-size:10px;color:var(--text4);align-self:center;">+{{ all_products|length - 10 }} more</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if data %}
+
+  <!-- KPI cards -->
+  <div class="kpi-grid" style="margin-bottom:18px;">
+    <div class="kpi-card fade-in" style="animation-delay:0s">
+      <div class="kpi-label">Total Reviews</div>
+      <div class="kpi-value">{{ "{:,}".format(data.kpis.total) }}</div>
+      <div class="kpi-sub">for {{ product_id }}</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.05s">
+      <div class="kpi-label">Health Score</div>
+      {% if data.health_score > 0.5 %}
+        <div class="kpi-value" style="color:var(--green);">{{ data.health_score }}</div>
+      {% elif data.health_score > 0.2 %}
+        <div class="kpi-value" style="color:var(--yellow);">{{ data.health_score }}</div>
+      {% else %}
+        <div class="kpi-value" style="color:var(--red);">{{ data.health_score }}</div>
+      {% endif %}
+      <div class="kpi-sub">sentiment balance</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.1s">
+      <div class="kpi-label">Status</div>
+      <div class="kpi-value" style="font-size:20px;padding-top:4px;">
+        <span class="pill {% if data.status == 'OK' %}pill-pos{% elif data.status == 'WATCH' %}pill-neu{% else %}pill-neg{% endif %}" style="font-size:14px;padding:6px 16px;">
+          {% if data.status == 'OK' %}<i class="fa-solid fa-circle-check"></i>{% elif data.status == 'WATCH' %}<i class="fa-solid fa-eye"></i>{% else %}<i class="fa-solid fa-triangle-exclamation"></i>{% endif %}
+          {{ data.status }}
+        </span>
+      </div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.15s">
+      <div class="kpi-label">Avg Rating</div>
+      <div class="kpi-value">{{ data.kpis.avg_score }}<span style="font-size:14px;color:var(--yellow);"> ★</span></div>
+      <div class="kpi-sub">out of 5.0</div>
+    </div>
+  </div>
+
+  <!-- Pie + Trend -->
+  <div class="grid-2">
+    <div class="card fade-in" style="animation-delay:0.2s">
+      <div class="card-title">
+        <span><i class="fa-solid fa-chart-pie" style="color:var(--accent);margin-right:7px;"></i>Sentiment Distribution</span>
+        <span class="badge badge-accent">Pie Chart</span>
+      </div>
+      <div id="productPie"></div>
+    </div>
+    <div class="card fade-in" style="animation-delay:0.25s">
+      <div class="card-title">
+        <span><i class="fa-solid fa-chart-line" style="color:var(--accent);margin-right:7px;"></i>Sentiment Trend</span>
+        <span class="badge badge-blue">Over Time</span>
+      </div>
+      <div id="productTrend"></div>
+    </div>
+  </div>
+
+  <!-- Top Words -->
+  <div class="card fade-in" style="animation-delay:0.28s;margin-bottom:18px;">
+    <div class="card-title">
+      <span><i class="fa-solid fa-tags" style="color:var(--accent);margin-right:6px;"></i>Most Common Words</span>
+      <span class="badge badge-accent">from reviews</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;">
+      {% if top_words and top_words|length > 0 %}
+        {% for word_item in top_words %}
+        <div style="display:inline-flex;align-items:center;gap:6px;background:var(--bg3);padding:6px 13px;border-radius:20px;border:1px solid var(--border);transition:all 0.15s;">
+          <span style="font-size:12.5px;font-weight:500;color:var(--text);">{{ word_item.word }}</span>
+          <span style="font-size:10px;color:var(--accent);font-family:var(--font-mono);background:var(--accent-dim);padding:1px 6px;border-radius:10px;">{{ word_item.count }}</span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div style="color:var(--text3);font-size:12px;padding:12px;">No words data available</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Helpfulness + Recent Reviews -->
+  <div class="grid-2">
+
+    <!-- Helpfulness Analysis -->
+    <div class="card fade-in" style="animation-delay:0.3s">
+      <div class="card-title">
+        <span><i class="fa-solid fa-chart-bar" style="color:var(--accent);margin-right:6px;"></i>Helpfulness Analysis</span>
+      </div>
+      <div style="margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:7px;">
+          <span style="font-size:12px;display:flex;align-items:center;gap:6px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;"></span>
+            Positive helpfulness
+          </span>
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--green);">{{ data.helpfulness.by_sentiment.positive }}%</span>
+        </div>
+        <div class="prog-wrap" style="height:7px;">
+          <div class="prog-fill" style="width:{{ data.helpfulness.by_sentiment.positive }}%;background:var(--green);"></div>
+        </div>
+      </div>
+      <div style="margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:7px;">
+          <span style="font-size:12px;display:flex;align-items:center;gap:6px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--red);display:inline-block;"></span>
+            Negative helpfulness
+          </span>
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--red);">{{ data.helpfulness.by_sentiment.negative }}%</span>
+        </div>
+        <div class="prog-wrap" style="height:7px;">
+          <div class="prog-fill" style="width:{{ data.helpfulness.by_sentiment.negative }}%;background:var(--red);"></div>
+        </div>
+      </div>
+      <div style="margin-bottom:16px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:7px;">
+          <span style="font-size:12px;display:flex;align-items:center;gap:6px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:var(--yellow);display:inline-block;"></span>
+            Neutral helpfulness
+          </span>
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--yellow);">{{ data.helpfulness.by_sentiment.neutral }}%</span>
+        </div>
+        <div class="prog-wrap" style="height:7px;">
+          <div class="prog-fill" style="width:{{ data.helpfulness.by_sentiment.neutral }}%;background:var(--yellow);"></div>
+        </div>
+      </div>
+      <div class="insight-card accent">
+        <i class="fa-solid fa-circle-info" style="color:var(--accent);margin-top:2px;"></i>
+        <div>
+          <div class="insight-label" style="color:var(--accent);">Overall</div>
+          <div class="insight-text">{{ data.helpfulness.overall }}% of readers found reviews useful for this product.</div>
+        </div>
+      </div>
+
+      {% if data.mismatches %}
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
+        <div style="font-size:12px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid fa-shuffle" style="color:var(--yellow);"></i>
+          Score–Sentiment Mismatch <span class="badge badge-yellow">{{ data.mismatches|length }} found</span>
+        </div>
+        {% for r in data.mismatches %}
+        <div style="padding:8px 10px;background:var(--bg3);border-radius:10px;margin-bottom:6px;border:1px solid var(--border);">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+            <span class="stars" style="font-size:11px;">{% for i in range(r.Score) %}★{% endfor %}{% for i in range(5-r.Score) %}☆{% endfor %}</span>
+            <span class="pill {% if r.predicted_sentiment == 'positive' %}pill-pos{% elif r.predicted_sentiment == 'negative' %}pill-neg{% else %}pill-neu{% endif %}" style="font-size:10px;">{{ r.predicted_sentiment }}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text2);">"{{ r.Text[:70] }}..."</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Recent Reviews -->
+    <div class="card fade-in" style="animation-delay:0.35s">
+      <div class="card-title">
+        <span><i class="fa-solid fa-clock-rotate-left" style="color:var(--accent);margin-right:6px;"></i>Recent Reviews</span>
+        <div>
+          <span class="badge badge-accent" id="reviewsCountBadge">latest 5</span>
+          <button id="seeAllReviewsBtn" onclick="toggleAllReviews()"
+                  style="background:var(--accent-dim);border:1px solid var(--accent);border-radius:20px;padding:4px 12px;margin-left:8px;color:var(--accent);font-size:11px;cursor:pointer;transition:all 0.2s;font-family:var(--font);">
+            <i class="fa-solid fa-eye"></i> See All
+          </button>
+        </div>
+      </div>
+      <div id="reviewsContainer" style="max-height:440px;overflow-y:auto;"></div>
+    </div>
+
+  </div>
+
+  {% else %}
+  <div class="card fade-in" style="text-align:center;padding:72px 40px;">
+    <div style="width:64px;height:64px;border-radius:50%;background:var(--bg3);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;">
+      <i class="fa-solid fa-magnifying-glass" style="font-size:24px;color:var(--text3);"></i>
+    </div>
+    <div style="font-size:18px;font-weight:700;margin-bottom:8px;color:var(--text);">Product Not Found</div>
+    <div style="color:var(--text3);font-size:13px;">
+      The Product ID <code>{{ product_id }}</code> was not found in the dataset.
+    </div>
+    <div style="margin-top:20px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+      {% for pid in all_products %}
+      <a href="/product?id={{ pid }}" style="padding:7px 14px;border-radius:20px;font-size:11px;font-family:var(--font-mono);text-decoration:none;border:1px solid var(--border);color:var(--text2);background:var(--bg3);transition:all 0.15s;">{{ pid }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+</div><!-- /content -->
+
+<!-- Review Modal -->
+<div id="reviewModal" class="pmodal">
+  <div class="pmodal-content fade-in">
+    <button class="pmodal-close" onclick="document.getElementById('reviewModal').style.display='none'">
+      <i class="fa-solid fa-xmark"></i>
+    </button>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span id="modalStars" class="stars" style="font-size:17px;"></span>
+        <span id="modalSentiment" class="pill"></span>
+      </div>
+      <span id="modalUser" style="font-size:11px;color:var(--text3);"></span>
+    </div>
+    <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:14px;background:var(--bg3);">
+      <p id="modalText" style="color:var(--text);font-size:13.5px;line-height:1.65;margin:0;white-space:pre-wrap;word-wrap:break-word;"></p>
+    </div>
+    <div class="conf-row" style="margin-top:16px;">
+      <span class="conf-label">Model confidence</span>
+      <div class="prog-wrap" style="flex:1;">
+        <div id="modalConfidenceFill" class="prog-fill" style="width:0%;"></div>
+      </div>
+      <span id="modalConfidenceVal" class="conf-val">0%</span>
+    </div>
+  </div>
+</div>
+
+<style>
+.pmodal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(6px);
+  padding: 40px 16px;
+  overflow-y: auto;
+}
+.pmodal-content {
+  background: var(--bg2);
+  margin: 0 auto;
+  padding: 26px;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 580px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  position: relative;
+}
+.pmodal-close {
+  position: absolute;
+  top: 14px; right: 14px;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text3);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  transition: all 0.15s;
+}
+.pmodal-close:hover { background: var(--red-dim); color: var(--red); border-color: var(--red-border); }
+.dots-btn {
+  cursor: pointer;
+  color: var(--text3);
+  margin-left: 6px;
+  font-size: 13px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  transition: all 0.15s;
+  display: inline-flex; align-items: center;
+}
+.dots-btn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+</style>
+
+<script>
+var modal = document.getElementById('reviewModal');
+
+window.onclick = function(e) { if (e.target === modal) modal.style.display = 'none'; }
+
+function openModal(el) {
+  var score      = parseInt(el.getAttribute('data-score'));
+  var sentiment  = el.getAttribute('data-sentiment');
+  var text       = el.getAttribute('data-text');
+  var confidence = parseFloat(el.getAttribute('data-confidence'));
+  var user       = el.getAttribute('data-user');
+
+  var stars = '';
+  for (var i = 0; i < score; i++) stars += '★';
+  for (var i = score; i < 5; i++) stars += '☆';
+  document.getElementById('modalStars').innerHTML = stars;
+
+  var s = document.getElementById('modalSentiment');
+  s.className = 'pill ' + (sentiment === 'positive' ? 'pill-pos' : sentiment === 'negative' ? 'pill-neg' : 'pill-neu');
+  s.textContent = sentiment;
+
+  document.getElementById('modalText').textContent = text;
+  document.getElementById('modalUser').innerHTML = '<i class="fa-solid fa-user" style="margin-right:4px;"></i>' + user;
+
+  var pct = Math.round(confidence * 100);
+  document.getElementById('modalConfidenceFill').style.width = pct + '%';
+  document.getElementById('modalConfidenceFill').style.background = confidence > 0.8 ? 'var(--green)' : (confidence > 0.65 ? 'var(--yellow)' : 'var(--red)');
+  document.getElementById('modalConfidenceVal').textContent = pct + '%';
+
+  modal.style.display = 'block';
+}
+
+{% if data and data.trend %}
+var currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+var textColor    = currentTheme === 'dark' ? '#7d8590' : '#64748b';
+
+var pieChart = new ApexCharts(document.querySelector('#productPie'), {
+  chart: { type: 'pie', height: 280, background: 'transparent', animations: { enabled: true } },
+  series: [{{ data.kpis.positive_count }}, {{ data.kpis.neutral_count }}, {{ data.kpis.negative_count }}],
+  labels: ['Positive', 'Neutral', 'Negative'],
+  colors: ['#16a34a', '#d97706', '#dc2626'],
+  legend: { position: 'bottom', labels: { colors: textColor }, fontSize: '12px' },
+  tooltip: { theme: currentTheme },
+  theme: { mode: currentTheme },
+  dataLabels: { style: { fontSize: '12px' } }
+});
+pieChart.render();
+
+var trendData   = {{ data.trend | tojson }};
+var trendMonths = trendData.map(function(d){ return d.month; });
+var trendPos    = trendData.map(function(d){ return d.positive; });
+var trendNeg    = trendData.map(function(d){ return d.negative; });
+var trendNeu    = trendData.map(function(d){ return d.neutral; });
+
+var trendChart = new ApexCharts(document.querySelector('#productTrend'), {
+  chart: { type: 'line', height: 280, background: 'transparent', toolbar: { show: false }, animations: { enabled: true } },
+  series: [
+    { name: 'Positive', data: trendPos },
+    { name: 'Negative', data: trendNeg },
+    { name: 'Neutral',  data: trendNeu }
+  ],
+  xaxis: { categories: trendMonths, labels: { style: { colors: textColor, fontSize: '10px' } }, axisBorder: { show: false } },
+  yaxis: { labels: { style: { colors: textColor, fontSize: '10px' } } },
+  colors: ['#16a34a', '#dc2626', '#d97706'],
+  stroke: { curve: 'smooth', width: 2 },
+  grid: { borderColor: currentTheme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', strokeDashArray: 3 },
+  legend: { position: 'top', labels: { colors: textColor }, fontSize: '12px' },
+  tooltip: { theme: currentTheme },
+  theme: { mode: currentTheme },
+  markers: { size: 4, hover: { size: 6 } }
+});
+trendChart.render();
+
+window.__apexCharts = window.__apexCharts || [];
+window.__apexCharts.push(pieChart, trendChart);
+{% elif data %}
+var currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+var textColor    = currentTheme === 'dark' ? '#7d8590' : '#64748b';
+
+var pieChart = new ApexCharts(document.querySelector('#productPie'), {
+  chart: { type: 'pie', height: 280, background: 'transparent', animations: { enabled: true } },
+  series: [{{ data.kpis.positive_count }}, {{ data.kpis.neutral_count }}, {{ data.kpis.negative_count }}],
+  labels: ['Positive', 'Neutral', 'Negative'],
+  colors: ['#16a34a', '#d97706', '#dc2626'],
+  legend: { position: 'bottom', labels: { colors: textColor }, fontSize: '12px' },
+  tooltip: { theme: currentTheme },
+  theme: { mode: currentTheme },
+  dataLabels: { style: { fontSize: '12px' } }
+});
+pieChart.render();
+
+window.__apexCharts = window.__apexCharts || [];
+window.__apexCharts.push(pieChart);
+{% endif %}
+
+var showAllReviews = false;
+var allReviews     = {{ data.recent_reviews | tojson | safe }};
+
+function toggleAllReviews() {
+  showAllReviews = !showAllReviews;
+  var btn   = document.getElementById('seeAllReviewsBtn');
+  var badge = document.getElementById('reviewsCountBadge');
+
+  if (showAllReviews) {
+    displayReviews(allReviews);
+    btn.innerHTML   = '<i class="fa-solid fa-eye-slash"></i> Show Less';
+    badge.textContent = 'all ' + allReviews.length;
+  } else {
+    displayReviews(allReviews.slice(0, 5));
+    btn.innerHTML   = '<i class="fa-solid fa-eye"></i> See All';
+    badge.textContent = 'latest 5';
+  }
+}
+
+function displayReviews(reviews) {
+  var container = document.getElementById('reviewsContainer');
+  container.innerHTML = '';
+
+  reviews.forEach(function(review) {
+    var stars = '';
+    for (var s = 0; s < review.Score; s++) stars += '★';
+    for (var s = review.Score; s < 5; s++) stars += '☆';
+
+    var sc = review.predicted_sentiment === 'positive' ? 'pill-pos' : (review.predicted_sentiment === 'negative' ? 'pill-neg' : 'pill-neu');
+    var shortText = review.Text.length > 110 ? review.Text.substring(0, 110) + '...' : review.Text;
+    var confPct   = Math.round(review.confidence * 100);
+    var confColor = review.confidence > 0.8 ? 'var(--green)' : (review.confidence > 0.65 ? 'var(--yellow)' : 'var(--red)');
+    var safeTxt   = review.Text.replace(/"/g, '&quot;').replace(/\n/g, ' ');
+
+    var div = document.createElement('div');
+    div.className = 'fade-in';
+    div.style.cssText = 'padding:13px 0;border-bottom:1px solid var(--border);';
+    div.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+        '<div style="display:flex;align-items:center;gap:8px;">' +
+          '<span class="stars" style="font-size:12px;">' + stars + '</span>' +
+          '<span class="pill ' + sc + '">' + review.predicted_sentiment + '</span>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+          '<span style="font-size:10px;color:var(--text3);">' + (review.ProfileName || 'Anonymous') + '</span>' +
+          '<span class="dots-btn" data-score="' + review.Score + '" data-sentiment="' + review.predicted_sentiment + '" data-text="' + safeTxt + '" data-confidence="' + review.confidence + '" data-user="' + (review.ProfileName || 'Anonymous') + '" onclick="openModal(this)">' +
+            '<i class="fa-solid fa-ellipsis"></i>' +
+          '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div style="font-size:12px;color:var(--text2);line-height:1.55;margin-bottom:9px;">"' + shortText + '"</div>' +
+      '<div class="conf-row">' +
+        '<span class="conf-label">Confidence</span>' +
+        '<div class="prog-wrap"><div class="prog-fill" style="width:' + confPct + '%;background:' + confColor + ';"></div></div>' +
+        '<span class="conf-val">' + confPct + '%</span>' +
+      '</div>';
+    container.appendChild(div);
+  });
+}
+
+if (allReviews && allReviews.length > 0) {
+  displayReviews(allReviews.slice(0, 5));
+}
+</script>
+{% endblock %}

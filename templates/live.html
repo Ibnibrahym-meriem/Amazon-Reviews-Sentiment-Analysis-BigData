@@ -1,0 +1,470 @@
+{% extends "base.html" %}
+{% block title %}Live Feed{% endblock %}
+
+{% block content %}
+<div class="topbar">
+  <div>
+    <div class="page-title">Live Review Feed</div>
+    <div class="page-sub">Real-time streaming predictions — Kafka &rarr; Spark &rarr; MongoDB pipeline</div>
+  </div>
+  <div class="topbar-right">
+    <div class="live-badge" id="connectionBadge">
+      <span class="live-dot" id="liveDot"></span>
+      <span id="connectionStatus">Connecting...</span>
+    </div>
+    <button id="pauseBtn" onclick="togglePause()"
+            style="padding:6px 16px;border-radius:20px;border:1px solid var(--border2);background:var(--bg3);color:var(--text2);font-size:12px;cursor:pointer;font-weight:500;display:flex;align-items:center;gap:6px;font-family:var(--font);transition:all 0.15s;">
+      <i class="fa-solid fa-pause" id="pauseIcon"></i>
+      <span id="pauseText">Pause</span>
+    </button>
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- Session KPIs -->
+  <div class="kpi-grid" style="margin-bottom:18px;">
+    <div class="kpi-card fade-in">
+      <div class="kpi-label">Session Reviews</div>
+      <div class="kpi-value" id="sessionCount">0</div>
+      <div class="kpi-sub">received this session</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.05s">
+      <div class="kpi-label">Current Positive</div>
+      <div class="kpi-value" id="sessionPositive" style="color:var(--green);">0%</div>
+      <div class="kpi-sub" id="posCount">0 reviews</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.1s">
+      <div class="kpi-label">Current Negative</div>
+      <div class="kpi-value" id="sessionNegative" style="color:var(--red);">0%</div>
+      <div class="kpi-sub" id="negCount">0 reviews</div>
+    </div>
+    <div class="kpi-card fade-in" style="animation-delay:0.15s">
+      <div class="kpi-label">Avg Confidence</div>
+      <div class="kpi-value" id="avgConfidence" style="color:var(--blue);">—</div>
+      <div class="kpi-sub">model certainty</div>
+    </div>
+  </div>
+
+  <!-- Session sentiment mini-bar -->
+  <div class="card fade-in" style="animation-delay:0.2s;margin-bottom:18px;padding:16px 22px;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="font-size:11px;font-weight:600;color:var(--text3);min-width:100px;text-transform:uppercase;letter-spacing:0.06em;">Session Mix</span>
+      <div style="flex:1;height:10px;border-radius:99px;overflow:hidden;background:var(--bg3);display:flex;">
+        <div id="mixPos" style="height:100%;background:var(--green);transition:width 0.5s ease;width:0%;"></div>
+        <div id="mixNeu" style="height:100%;background:var(--yellow);transition:width 0.5s ease;width:0%;"></div>
+        <div id="mixNeg" style="height:100%;background:var(--red);transition:width 0.5s ease;width:0%;"></div>
+      </div>
+      <div style="display:flex;gap:12px;font-size:10.5px;font-family:var(--font-mono);">
+        <span style="color:var(--green);" id="mixPosLbl">0%</span>
+        <span style="color:var(--yellow);" id="mixNeuLbl">0%</span>
+        <span style="color:var(--red);" id="mixNegLbl">0%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Live Feed -->
+  <div class="card fade-in" style="animation-delay:0.25s;">
+    <div class="card-title">
+      <span>
+        <i class="fa-solid fa-satellite-dish" style="color:var(--accent);margin-right:7px;"></i>
+        Incoming Reviews
+      </span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="badge badge-green" id="streamLabel">
+          <i class="fa-regular fa-clock" style="margin-right:4px;"></i>
+          waiting for stream
+        </span>
+        <button onclick="clearSession()"
+                style="padding:4px 10px;border-radius:20px;border:1px solid var(--border2);background:transparent;color:var(--text3);font-size:10px;cursor:pointer;font-family:var(--font);">
+          Reset
+        </button>
+      </div>
+    </div>
+    <div id="liveFeed">
+      <!-- Waiting state shown by default — removed only when first review arrives -->
+      <div id="waitingState" style="text-align:center;padding:60px 20px;color:var(--text3);">
+        <div style="width:64px;height:64px;border-radius:50%;background:var(--accent-dim);border:2px solid rgba(14,165,233,0.15);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;animation:pulse 2s infinite;">
+          <i class="fa-solid fa-plug" style="font-size:24px;color:var(--accent);"></i>
+        </div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:8px;color:var(--text2);">Waiting for live stream</div>
+        <div style="font-size:12px;line-height:1.7;max-width:340px;margin:0 auto;">
+          Start your <strong>Kafka producer</strong> and <strong>Spark streaming job</strong>.<br>
+          New reviews will appear here automatically — no page refresh needed.
+        </div>
+        <div style="margin-top:20px;display:flex;align-items:center;justify-content:center;gap:8px;">
+          <span id="waitDot" style="width:8px;height:8px;border-radius:50%;background:var(--yellow);display:inline-block;animation:pulse 1.5s infinite;"></span>
+          <span style="font-size:11px;color:var(--text3);font-family:var(--font-mono);" id="waitLabel">SSE connected — listening...</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<style>
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.review-card-live {
+  padding: 14px 16px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 10px;
+  animation: slideDown 0.35s ease;
+  transition: box-shadow 0.2s;
+}
+.review-card-live:hover { box-shadow: var(--shadow-md); }
+#liveFeed { max-height: 560px; overflow-y: auto; }
+</style>
+
+<script>
+// ============================================================
+// STATE
+// ============================================================
+var sessionCount    = 0;
+var sessionPositive = 0;
+var sessionNegative = 0;
+var sessionNeutral  = 0;
+var totalConf       = 0;
+var paused          = false;
+var eventSource     = null;
+var reconnectDelay  = 3000; // start at 3s, back off on repeated failures
+var firstReview     = true; // track whether we've seen the first live review
+
+// ============================================================
+// STATS
+// ============================================================
+function updateStats() {
+  document.getElementById('sessionCount').textContent = sessionCount;
+  var total  = sessionCount || 1;
+  var posPct = Math.round((sessionPositive / total) * 100);
+  var negPct = Math.round((sessionNegative / total) * 100);
+  var neuPct = Math.max(0, 100 - posPct - negPct);
+
+  document.getElementById('sessionPositive').textContent = posPct + '%';
+  document.getElementById('sessionNegative').textContent = negPct + '%';
+  document.getElementById('posCount').textContent        = sessionPositive + ' reviews';
+  document.getElementById('negCount').textContent        = sessionNegative + ' reviews';
+
+  var avgConf = sessionCount > 0 ? Math.round((totalConf / sessionCount) * 100) : 0;
+  document.getElementById('avgConfidence').textContent   = sessionCount > 0 ? avgConf + '%' : '—';
+
+  document.getElementById('mixPos').style.width    = posPct + '%';
+  document.getElementById('mixNeu').style.width    = neuPct + '%';
+  document.getElementById('mixNeg').style.width    = negPct + '%';
+  document.getElementById('mixPosLbl').textContent = posPct + '%';
+  document.getElementById('mixNeuLbl').textContent = neuPct + '%';
+  document.getElementById('mixNegLbl').textContent = negPct + '%';
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+function sentimentClass(s) {
+  if (s === 'positive') return 'pill-pos';
+  if (s === 'negative') return 'pill-neg';
+  return 'pill-neu';
+}
+function starStr(n) {
+  var s = '';
+  for (var i = 0; i < 5; i++) s += (i < n) ? '★' : '☆';
+  return s;
+}
+function confColor(c) {
+  if (c >= 0.7) return 'var(--green)';
+  if (c >= 0.5) return 'var(--yellow)';
+  return 'var(--red)';
+}
+function setConnectionStatus(state) {
+  // state: 'connecting' | 'live' | 'paused' | 'offline'
+  var dot    = document.getElementById('liveDot');
+  var label  = document.getElementById('connectionStatus');
+  var badge  = document.getElementById('connectionBadge');
+  var stream = document.getElementById('streamLabel');
+
+  if (state === 'live') {
+    dot.style.background   = 'var(--green, #22c55e)';
+    label.textContent      = 'Streaming Live';
+    stream.textContent     = '⚡ live';
+    stream.style.color     = 'var(--green)';
+  } else if (state === 'paused') {
+    dot.style.background   = 'var(--yellow, #eab308)';
+    label.textContent      = 'Paused';
+    stream.textContent     = '⏸ paused';
+    stream.style.color     = 'var(--yellow)';
+  } else if (state === 'offline') {
+    dot.style.background   = 'var(--red, #ef4444)';
+    label.textContent      = 'Disconnected';
+    stream.textContent     = '✗ offline';
+    stream.style.color     = 'var(--red)';
+  } else {
+    dot.style.background   = 'var(--yellow, #eab308)';
+    label.textContent      = 'Connecting...';
+    stream.textContent     = '⏳ connecting';
+    stream.style.color     = 'var(--text3)';
+  }
+}
+
+// ============================================================
+// ADD REVIEW CARD TO DOM
+// ============================================================
+// ============================================================
+// IMPROVED ADD REVIEW - Shows ALL reviews
+// ============================================================
+function addReview(review) {
+    console.log('🎯 Adding review:', review.Id, review.predicted_sentiment);
+    
+    // Update counters
+    sessionCount++;
+    var s = review.predicted_sentiment;
+    if (s === 'positive') sessionPositive++;
+    else if (s === 'negative') sessionNegative++;
+    else sessionNeutral++;
+    totalConf += (review.confidence || 0);
+    updateStats();
+
+    // Remove waiting state on first real review
+    if (firstReview) {
+        firstReview = false;
+        var ws = document.getElementById('waitingState');
+        if (ws) ws.remove();
+        setConnectionStatus('live');
+    }
+
+    var feed = document.getElementById('liveFeed');
+    var div = document.createElement('div');
+    div.className = 'review-card-live';
+    div.id = `review-${review.Id}-${Date.now()}`; // Unique ID
+
+    var confPct = Math.round((review.confidence || 0) * 100);
+    var ts = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    var sentClass = sentimentClass(s);
+    var stars = starStr(review.Score || 0);
+    var rawText = review.Text || '';
+    var text = rawText.length > 200 ? rawText.substring(0, 200) + '...' : rawText;
+    var cc = confColor(review.confidence || 0);
+
+    // Handle processed_at safely
+    var timeStr = ts;
+    if (review.processed_at) {
+        try {
+            var reviewDate = new Date(review.processed_at);
+            if (!isNaN(reviewDate.getTime())) {
+                timeStr = reviewDate.toLocaleTimeString();
+            }
+        } catch(e) {}
+    }
+
+    div.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent);background:var(--accent-dim);padding:3px 9px;border-radius:20px;">
+                    <i class="fa-solid fa-box" style="margin-right:5px;font-size:9px;"></i>${escapeHtml(review.ProductId || '—')}
+                </span>
+                <span class="pill ${sentClass}">${s}</span>
+                <span style="font-size:10px;color:var(--text3);font-family:var(--font-mono);">
+                    by ${escapeHtml(review.ProfileName || 'anonymous')}
+                </span>
+            </div>
+            <span style="font-size:10px;color:var(--text3);font-family:var(--font-mono);white-space:nowrap;">${timeStr}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text);line-height:1.6;margin-bottom:10px;">&ldquo;${escapeHtml(text)}&rdquo;</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+            <span class="stars" style="font-size:13px;">${stars}</span>
+            <div style="display:flex;align-items:center;gap:8px;flex:1;">
+                <span style="font-size:10px;color:var(--text3);white-space:nowrap;">Confidence</span>
+                <div class="prog-wrap" style="flex:1;height:5px;">
+                    <div class="prog-fill" style="width:${confPct}%;background:${cc};"></div>
+                </div>
+                <span style="font-size:10px;font-family:var(--font-mono);color:var(--text2);min-width:32px;">${confPct}%</span>
+            </div>
+        </div>
+    `;
+
+    // Insert at top
+    feed.insertBefore(div, feed.firstChild);
+    
+    // Keep only last 50 reviews (increased from 30)
+    var cards = feed.querySelectorAll('.review-card-live');
+    if (cards.length > 50) {
+        for (var i = 50; i < cards.length; i++) {
+            cards[i].remove();
+        }
+    }
+    
+    console.log(`✅ Added review ${review.Id} - Total reviews shown: ${Math.min(feed.children.length, 50)}`);
+}
+
+// Helper function for escaping
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/[&<>]/g, function(m) {
+        if (m === '&') return '&amp;';
+        if (m === '<') return '&lt;';
+        if (m === '>') return '&gt;';
+        return m;
+    });
+}
+
+
+// ============================================================
+// SSE SETUP — WITH lastId parameter
+// ============================================================
+// Remove or comment out old functions
+// Global variables
+var eventSource = null;
+var paused = false;
+var reconnectDelay = 3000;
+var reconnectTimer = null;
+
+function setupSSE() {
+    if (paused) return;
+    
+    // Clear any pending reconnect
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+    
+    // Close existing connection if any
+    if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+    }
+    
+    setConnectionStatus('connecting');
+    
+    // Get last seen time from localStorage
+    var lastTime = localStorage.getItem('lastSeenTime');
+    
+    var url = '/stream';
+    if (lastTime) {
+        url += '?lastTime=' + encodeURIComponent(lastTime);
+        console.log('[SSE] Resuming from:', lastTime);
+    } else {
+        console.log('[SSE] First connection');
+    }
+    
+    // Create SINGLE EventSource
+    eventSource = new EventSource(url);
+    
+    eventSource.onopen = function() {
+        console.log('[SSE] ✅ Connection established');
+        setConnectionStatus('live');
+        reconnectDelay = 3000; // Reset delay on successful connection
+    };
+    
+    eventSource.onmessage = function(event) {
+        if (!event.data || event.data.trim() === '') return;
+        
+        console.log('[SSE] 📨 Received review');
+        
+        try {
+            var review = JSON.parse(event.data);
+            
+            // Save timestamp for future reconnects
+            if (review.processed_at) {
+                localStorage.setItem('lastSeenTime', review.processed_at);
+            }
+            
+            addReview(review);
+        } catch(e) {
+            console.error('[SSE] Parse error:', e);
+        }
+    };
+    
+    eventSource.onerror = function(event) {
+        // Don't log every error - EventSource triggers error on normal close
+        if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+            console.log('[SSE] Connection closed');
+            setConnectionStatus('offline');
+            
+            // Only reconnect if not paused
+            if (!paused) {
+                reconnectTimer = setTimeout(function() {
+                    console.log('[SSE] Reconnecting...');
+                    setupSSE();
+                }, reconnectDelay);
+                reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+            }
+        } else if (eventSource && eventSource.readyState === EventSource.CONNECTING) {
+            console.log('[SSE] Connection lost, reconnecting...');
+        }
+    };
+}
+
+// Clean up on page unload
+window.addEventListener('beforeunload', function() {
+    if (eventSource) {
+        eventSource.close();
+    }
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+    }
+});
+// ============================================================
+// PAUSE / RESUME
+// ============================================================
+function togglePause() {
+  paused = !paused;
+  var icon = document.getElementById('pauseIcon');
+  var text = document.getElementById('pauseText');
+  var btn  = document.getElementById('pauseBtn');
+
+  if (paused) {
+    icon.className       = 'fa-solid fa-play';
+    text.textContent     = 'Resume';
+    btn.style.borderColor = 'var(--yellow)';
+    btn.style.color       = 'var(--yellow)';
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    setConnectionStatus('paused');
+  } else {
+    icon.className       = 'fa-solid fa-pause';
+    text.textContent     = 'Pause';
+    btn.style.borderColor = '';
+    btn.style.color       = '';
+    setupSSE();
+  }
+}
+
+// ============================================================
+// RESET SESSION
+// ============================================================
+function clearSession() {
+  sessionCount = sessionPositive = sessionNegative = sessionNeutral = totalConf = 0;
+  firstReview  = true;
+  updateStats();
+
+  var feed = document.getElementById('liveFeed');
+  feed.innerHTML = `
+    <div id="waitingState" style="text-align:center;padding:60px 20px;color:var(--text3);">
+      <div style="width:64px;height:64px;border-radius:50%;background:var(--accent-dim);border:2px solid rgba(14,165,233,0.15);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;animation:pulse 2s infinite;">
+        <i class="fa-solid fa-plug" style="font-size:24px;color:var(--accent);"></i>
+      </div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:8px;color:var(--text2);">Waiting for live stream</div>
+      <div style="font-size:12px;line-height:1.7;max-width:340px;margin:0 auto;">
+        Start your <strong>Kafka producer</strong> and <strong>Spark streaming job</strong>.<br>
+        New reviews will appear here automatically.
+      </div>
+      <div style="margin-top:20px;display:flex;align-items:center;justify-content:center;gap:8px;">
+        <span id="waitDot" style="width:8px;height:8px;border-radius:50%;background:var(--yellow);display:inline-block;animation:pulse 1.5s infinite;"></span>
+        <span style="font-size:11px;color:var(--text3);font-family:var(--font-mono);" id="waitLabel">SSE connected — listening...</span>
+      </div>
+    </div>
+  `;
+  setConnectionStatus('connecting');
+}
+
+// ============================================================
+// BOOT — ONLY start SSE, never load historical data
+// ============================================================
+setupSSE();
+</script>
+{% endblock %}
