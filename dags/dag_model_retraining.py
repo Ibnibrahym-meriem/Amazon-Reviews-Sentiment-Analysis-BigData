@@ -28,7 +28,7 @@ MLFLOW_URI         = "http://mlflow:5000"
 MLFLOW_EXPERIMENT  = "Amazon_Sentiment_Retraining"
 
 MIN_SAMPLES         = 300
-PROMOTION_THRESHOLD = 0.005
+PROMOTION_THRESHOLD = 0.015
 NEG_THRESHOLD       = 0.35
 
 PARQUET_RAW = "/tmp/airflow_raw_data"
